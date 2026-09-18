@@ -1,0 +1,101 @@
+import express, { Express, Request, Response } from 'express';
+import helmet from 'helmet';
+import cors from 'cors';
+import compression from 'compression';
+import morgan from 'morgan';
+import rateLimit from 'express-rate-limit';
+import { config } from './config';
+import { errorHandler } from './middleware/error.middleware';
+import { AppError } from './errors/AppError';
+
+// Import Route Handlers
+import authRoutes from './modules/auth/auth.routes';
+import userRoutes from './modules/users/user.routes';
+import orgRoutes from './modules/organizations/org.routes';
+import projectRoutes from './modules/projects/project.routes';
+import requirementRoutes from './modules/requirements/requirement.routes';
+import taskRoutes from './modules/tasks/task.routes';
+import qaRoutes from './modules/qa/qa.routes';
+import releaseRoutes from './modules/releases/release.routes';
+import invoiceRoutes from './modules/invoices/invoice.routes';
+import notificationRoutes from './modules/notifications/notification.routes';
+import storageRoutes from './modules/storage/storage.routes';
+import auditRoutes from './modules/audit/audit.routes';
+import reportRoutes from './modules/reports/report.routes';
+
+export function createApp(): Express {
+  const app = express();
+
+  // Security Headers
+  app.use(helmet());
+
+  // CORS Configuration
+  app.use(
+    cors({
+      origin: config.corsOrigins,
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'x-client-info'],
+    })
+  );
+
+  // Performance & Parsing
+  app.use(compression());
+  app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+  // Logging
+  if (config.nodeEnv !== 'test') {
+    app.use(morgan('dev'));
+  }
+
+  // Global Rate Limiting
+  const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 1000, // limit each IP to 1000 requests per window
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      success: false,
+      error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests, please try again later' },
+    },
+  });
+  app.use('/api', limiter);
+
+  // Healthcheck Endpoint
+  app.get('/health', (_req: Request, res: Response) => {
+    res.status(200).json({
+      status: 'ok',
+      service: 'deliveryos-backend',
+      environment: config.nodeEnv,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // Mount API Modules
+  app.use('/api/auth', authRoutes);
+  app.use('/api/users', userRoutes);
+  app.use('/api/organizations', orgRoutes);
+  app.use('/api/projects', projectRoutes);
+  app.use('/api/requirements', requirementRoutes);
+  app.use('/api/tasks', taskRoutes);
+  app.use('/api/qa', qaRoutes);
+  app.use('/api/releases', releaseRoutes);
+  app.use('/api/invoices', invoiceRoutes);
+  app.use('/api/notifications', notificationRoutes);
+  app.use('/api/storage', storageRoutes);
+  app.use('/api/audit', auditRoutes);
+  app.use('/api/reports', reportRoutes);
+
+  // 404 Handler
+  app.use((req: Request, _res: Response, next) => {
+    next(AppError.notFound(`Cannot find ${req.method} ${req.originalUrl}`));
+  });
+
+  // Centralized Error Handling Middleware
+  app.use(errorHandler);
+
+  return app;
+}
+
+export const app = createApp();

@@ -1,0 +1,892 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// -------------------------------------------------------------
+// Enums
+// -------------------------------------------------------------
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  PROJECT_MANAGER
+  DEVELOPER
+  QA
+  CLIENT
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  ON_HOLD
+  CLIENT_REVIEW
+  COMPLETED
+  CANCELLED
+  ARCHIVED
+}
+
+enum ProjectPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ProjectMembershipRole {
+  PROJECT_MANAGER
+  DEVELOPER
+  QA
+}
+
+enum RequirementPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum RequirementStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  NEEDS_CLARIFICATION
+  ESTIMATING
+  WAITING_FOR_APPROVAL
+  APPROVED
+  REJECTED
+  IN_DEVELOPMENT
+  QA
+  CLIENT_REVIEW
+  COMPLETED
+  CANCELLED
+}
+
+enum EstimateStatus {
+  DRAFT
+  SENT
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
+enum RequirementApprovalDecision {
+  APPROVED
+  REJECTED
+  CHANGES_REQUESTED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  BLOCKED
+  CODE_REVIEW
+  READY_FOR_QA
+  DONE
+  CANCELLED
+}
+
+enum CommentVisibility {
+  INTERNAL
+  CLIENT_VISIBLE
+}
+
+enum TestCaseStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum TestRunResult {
+  PASS
+  FAIL
+  BLOCKED
+  SKIPPED
+}
+
+enum BugSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum BugPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum BugStatus {
+  OPEN
+  TRIAGED
+  IN_PROGRESS
+  FIXED
+  READY_FOR_RETEST
+  REOPENED
+  CLOSED
+  WONT_FIX
+}
+
+enum ClientReviewDecision {
+  APPROVED
+  CHANGES_REQUESTED
+}
+
+enum ReleaseStatus {
+  PLANNED
+  IN_PROGRESS
+  READY
+  DEPLOYED
+  ROLLED_BACK
+  CANCELLED
+}
+
+enum ReleaseItemType {
+  REQUIREMENT
+  BUG_FIX
+}
+
+enum FileVisibility {
+  INTERNAL
+  CLIENT_VISIBLE
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  VOID
+}
+
+enum NotificationType {
+  REQUIREMENT_SUBMITTED
+  REQUIREMENT_CLARIFICATION
+  REQUIREMENT_STATUS_CHANGED
+  ESTIMATE_SENT
+  ESTIMATE_DECIDED
+  TASK_ASSIGNED
+  TASK_STATUS_CHANGED
+  TASK_OVERDUE
+  BUG_CREATED
+  BUG_ASSIGNED
+  CRITICAL_BUG_CREATED
+  BUG_RETEST_READY
+  BUG_READY_FOR_RETEST
+  CLIENT_REVIEW_REQUESTED
+  CLIENT_CHANGES_REQUESTED
+  RELEASE_DEPLOYED
+  INVOICE_ISSUED
+  INVOICE_PAID
+  PAYMENT_OVERDUE
+  MENTION
+  GENERAL
+}
+
+// -------------------------------------------------------------
+// Core Models
+// -------------------------------------------------------------
+
+model User {
+  id              String      @id @default(uuid())
+  supabaseUserId  String?     @unique
+  email           String      @unique
+  passwordHash    String?     // For offline/local integration testing support
+  role            UserRole    @default(DEVELOPER)
+  status          UserStatus  @default(ACTIVE)
+  organizationId  String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  lastLoginAt     DateTime?
+
+  organization    Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  profile         Profile?
+  managedProjects Project[]     @relation("ProjectManager")
+  memberships     ProjectMember[]
+
+  assignedTasks   Task[]        @relation("TaskAssignee")
+  createdTasks    Task[]        @relation("TaskCreator")
+  taskComments    TaskComment[]
+  timeEntries     TimeEntry[]
+
+  submittedRequirements Requirement[] @relation("RequirementSubmitter")
+  requestedRequirements Requirement[] @relation("RequirementRequester")
+  requirementVersions   RequirementVersion[]
+  requirementStatusHist RequirementStatusHistory[]
+  estimatesCreated      Estimate[]
+  approvalsDecided      RequirementApproval[]
+  clientReviews         ClientReview[]
+
+  createdTestCases      TestCase[]
+  executedTestRuns      TestRun[]
+  reportedBugs          Bug[]          @relation("BugReporter")
+  assignedBugs          Bug[]          @relation("BugAssignee")
+  bugComments           BugComment[]
+
+  createdReleases       Release[]
+  uploadedFiles         FileAsset[]
+  notifications         Notification[]
+  auditLogs             AuditLog[]
+  recordedPayments      Payment[]
+  activityLogs          ProjectActivity[]
+
+  @@index([email])
+  @@index([role])
+  @@index([status])
+  @@index([organizationId])
+}
+
+model Profile {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  firstName   String
+  lastName    String
+  displayName String?
+  avatarUrl   String?
+  phone       String?
+  jobTitle    String?
+  timezone    String   @default("UTC")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Organization {
+  id           String             @id @default(uuid())
+  name         String
+  slug         String             @unique
+  contactEmail String
+  contactPhone String?
+  address      String?
+  city         String?
+  country      String?
+  status       OrganizationStatus @default(ACTIVE)
+  notes        String?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  deletedAt    DateTime?
+
+  users        User[]
+  projects     Project[]
+  files        FileAsset[]
+  invoices     Invoice[]
+
+  @@index([slug])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model Project {
+  id                   String          @id @default(uuid())
+  organizationId       String
+  projectManagerId     String
+  name                 String
+  code                 String          @unique
+  description          String?
+  status               ProjectStatus   @default(PLANNING)
+  priority             ProjectPriority @default(MEDIUM)
+  startDate            DateTime?
+  targetDate           DateTime?
+  completedAt          DateTime?
+  budget               Decimal?        @db.Decimal(12, 2)
+  currency             String          @default("USD")
+  estimatedEffortHours Decimal?        @db.Decimal(10, 2)
+  actualEffortHours    Decimal?        @default(0) @db.Decimal(10, 2)
+  notes                String?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  deletedAt            DateTime?
+
+  organization         Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  projectManager       User            @relation("ProjectManager", fields: [projectManagerId], references: [id], onDelete: Restrict)
+  members              ProjectMember[]
+  requirements         Requirement[]
+  tasks                Task[]
+  timeEntries          TimeEntry[]
+  testCases            TestCase[]
+  bugs                 Bug[]
+  clientReviews        ClientReview[]
+  releases             Release[]
+  files                FileAsset[]
+  invoices             Invoice[]
+  activities           ProjectActivity[]
+
+  @@index([organizationId])
+  @@index([projectManagerId])
+  @@index([status])
+  @@index([priority])
+  @@index([targetDate])
+  @@index([deletedAt])
+}
+
+model ProjectMember {
+  id             String                @id @default(uuid())
+  projectId      String
+  userId         String
+  membershipRole ProjectMembershipRole
+  joinedAt       DateTime              @default(now())
+  leftAt         DateTime?
+
+  project        Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user           User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId, leftAt])
+  @@index([projectId])
+  @@index([userId])
+  @@index([leftAt])
+}
+
+// -------------------------------------------------------------
+// Requirements & Approvals Models
+// -------------------------------------------------------------
+
+model Requirement {
+  id                 String              @id @default(uuid())
+  projectId          String
+  title              String
+  description        String
+  priority           RequirementPriority @default(MEDIUM)
+  category           String              @default("General")
+  acceptanceCriteria String
+  status             RequirementStatus   @default(DRAFT)
+  currentVersion     Int                 @default(1)
+  submittedById      String
+  requestedByUserId  String?
+  targetDate         DateTime?
+  approvedAt         DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  deletedAt          DateTime?
+
+  project            Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  submittedBy        User                @relation("RequirementSubmitter", fields: [submittedById], references: [id], onDelete: Restrict)
+  requestedByUser    User?               @relation("RequirementRequester", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+
+  versions           RequirementVersion[]
+  statusHistory      RequirementStatusHistory[]
+  estimates          Estimate[]
+  approvals          RequirementApproval[]
+  tasks              Task[]
+  testCases          TestCase[]
+  bugs               Bug[]
+  clientReviews      ClientReview[]
+  releaseItems       ReleaseItem[]
+
+  @@index([projectId])
+  @@index([status])
+  @@index([priority])
+  @@index([submittedById])
+  @@index([deletedAt])
+}
+
+model RequirementVersion {
+  id                 String      @id @default(uuid())
+  requirementId      String
+  versionNumber      Int
+  title              String
+  description        String
+  acceptanceCriteria String
+  changeSummary      String?
+  createdById        String
+  createdAt          DateTime    @default(now())
+
+  requirement        Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  createdBy          User        @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([requirementId, versionNumber])
+  @@index([requirementId])
+}
+
+model RequirementStatusHistory {
+  id            String            @id @default(uuid())
+  requirementId String
+  fromStatus    RequirementStatus
+  toStatus      RequirementStatus
+  actorId       String
+  comment       String?
+  createdAt     DateTime          @default(now())
+
+  requirement   Requirement       @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  actor         User              @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([requirementId])
+  @@index([createdAt])
+}
+
+model Estimate {
+  id                   String         @id @default(uuid())
+  requirementId        String
+  requirementVersion   Int
+  version              Int            @default(1)
+  devHours             Decimal        @db.Decimal(8, 2)
+  qaHours              Decimal        @db.Decimal(8, 2)
+  designHours          Decimal        @default(0) @db.Decimal(8, 2)
+  totalHours           Decimal        @db.Decimal(8, 2)
+  estimatedCost        Decimal        @default(0) @db.Decimal(12, 2)
+  clientPrice          Decimal        @db.Decimal(12, 2)
+  proposedDeliveryDate DateTime?
+  assumptions          String?
+  exclusions           String?
+  notes                String?
+  status               EstimateStatus @default(DRAFT)
+  createdById          String
+  createdAt            DateTime       @default(now())
+
+  requirement          Requirement    @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  createdBy            User           @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  approvals            RequirementApproval[]
+
+  @@index([requirementId])
+  @@index([status])
+}
+
+model RequirementApproval {
+  id                 String                      @id @default(uuid())
+  requirementId      String
+  requirementVersion Int
+  estimateId         String
+  estimateVersion    Int
+  decision           RequirementApprovalDecision
+  decidedById        String
+  comment            String?
+  decidedAt          DateTime                    @default(now())
+  deletedAt          DateTime?
+
+  requirement        Requirement                 @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  estimate           Estimate                    @relation(fields: [estimateId], references: [id], onDelete: Restrict)
+  decidedBy          User                        @relation(fields: [decidedById], references: [id], onDelete: Restrict)
+
+  @@index([requirementId])
+  @@index([estimateId])
+  @@index([decidedAt])
+}
+
+// -------------------------------------------------------------
+// Tasks & Development Models
+// -------------------------------------------------------------
+
+model Task {
+  id             String        @id @default(uuid())
+  projectId      String
+  requirementId  String?
+  title          String
+  description    String?
+  assigneeId     String?
+  creatorId      String
+  priority       TaskPriority  @default(MEDIUM)
+  status         TaskStatus    @default(TODO)
+  estimatedHours Decimal?      @db.Decimal(8, 2)
+  actualHours    Decimal?      @default(0) @db.Decimal(8, 2)
+  dueDate        DateTime?
+  labels         String[]      @default([])
+  completedAt    DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
+
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requirement    Requirement?  @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+  assignee       User?         @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  creator        User          @relation("TaskCreator", fields: [creatorId], references: [id], onDelete: Restrict)
+
+  comments       TaskComment[]
+  timeEntries    TimeEntry[]
+  testRuns       TestRun[]
+  bugs           Bug[]
+
+  @@index([projectId])
+  @@index([requirementId])
+  @@index([assigneeId])
+  @@index([status])
+  @@index([priority])
+  @@index([dueDate])
+  @@index([deletedAt])
+}
+
+model TaskComment {
+  id         String            @id @default(uuid())
+  taskId     String
+  authorId   String
+  content    String
+  visibility CommentVisibility @default(INTERNAL)
+  createdAt  DateTime          @default(now())
+
+  task       Task              @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author     User              @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([taskId])
+  @@index([createdAt])
+}
+
+model TimeEntry {
+  id              String   @id @default(uuid())
+  projectId       String
+  taskId          String
+  userId          String
+  date            DateTime
+  durationMinutes Int
+  note            String?
+  billable        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task            Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user            User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([projectId])
+  @@index([taskId])
+  @@index([userId])
+  @@index([date])
+}
+
+// -------------------------------------------------------------
+// QA & Bug Tracking Models
+// -------------------------------------------------------------
+
+model TestCase {
+  id             String         @id @default(uuid())
+  projectId      String
+  requirementId  String?
+  title          String
+  steps          String
+  expectedResult String
+  createdById    String
+  status         TestCaseStatus @default(ACTIVE)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  project        Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requirement    Requirement?   @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+  createdBy      User           @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  testRuns       TestRun[]
+  bugs           Bug[]
+
+  @@index([projectId])
+  @@index([requirementId])
+  @@index([status])
+}
+
+model TestRun {
+  id             String        @id @default(uuid())
+  testCaseId     String
+  taskId         String?
+  executedById   String
+  result         TestRunResult
+  actualResult   String
+  evidenceFileId String?
+  notes          String?
+  executedAt     DateTime      @default(now())
+
+  testCase       TestCase      @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+  task           Task?         @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  executedBy     User          @relation(fields: [executedById], references: [id], onDelete: Restrict)
+
+  @@index([testCaseId])
+  @@index([taskId])
+  @@index([result])
+  @@index([executedAt])
+}
+
+model Bug {
+  id               String       @id @default(uuid())
+  projectId        String
+  requirementId    String?
+  taskId           String?
+  testCaseId       String?
+  title            String
+  description      String
+  severity         BugSeverity  @default(MEDIUM)
+  priority         BugPriority  @default(MEDIUM)
+  stepsToReproduce String
+  expectedResult   String
+  actualResult     String
+  environment      String?
+  reporterId       String
+  assigneeId       String?
+  status           BugStatus    @default(OPEN)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  resolvedAt       DateTime?
+
+  project          Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requirement      Requirement? @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+  task             Task?        @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  testCase         TestCase?    @relation(fields: [testCaseId], references: [id], onDelete: SetNull)
+  reporter         User         @relation("BugReporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  assignee         User?        @relation("BugAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  comments         BugComment[]
+  releaseItems     ReleaseItem[]
+
+  @@index([projectId])
+  @@index([requirementId])
+  @@index([taskId])
+  @@index([status])
+  @@index([severity])
+  @@index([assigneeId])
+  @@index([createdAt])
+}
+
+model BugComment {
+  id         String            @id @default(uuid())
+  bugId      String
+  authorId   String
+  content    String
+  visibility CommentVisibility @default(INTERNAL)
+  createdAt  DateTime          @default(now())
+
+  bug        Bug               @relation(fields: [bugId], references: [id], onDelete: Cascade)
+  author     User              @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([bugId])
+  @@index([createdAt])
+}
+
+// -------------------------------------------------------------
+// Client Reviews & Releases Models
+// -------------------------------------------------------------
+
+model ClientReview {
+  id                 String               @id @default(uuid())
+  requirementId      String
+  projectId          String
+  releaseId          String?
+  reviewerId         String
+  decision           ClientReviewDecision
+  comment            String?
+  requirementVersion Int
+  decidedAt          DateTime             @default(now())
+
+  requirement        Requirement          @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  project            Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  reviewer           User                 @relation(fields: [reviewerId], references: [id], onDelete: Restrict)
+
+  @@index([requirementId])
+  @@index([projectId])
+  @@index([decidedAt])
+}
+
+model Release {
+  id              String        @id @default(uuid())
+  projectId       String
+  version         String
+  name            String
+  status          ReleaseStatus @default(PLANNED)
+  releaseDate     DateTime?
+  deployedAt      DateTime?
+  releaseNotes    String?
+  deploymentNotes String?
+  createdById     String
+  createdAt       DateTime      @default(now())
+  deletedAt       DateTime?
+
+  project         Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy       User          @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  items           ReleaseItem[]
+
+  @@unique([projectId, version])
+  @@index([projectId])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model ReleaseItem {
+  id            String          @id @default(uuid())
+  releaseId     String
+  itemType      ReleaseItemType
+  requirementId String?
+  bugId         String?
+  description   String?
+
+  release       Release         @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+  requirement   Requirement?    @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+  bug           Bug?            @relation(fields: [bugId], references: [id], onDelete: SetNull)
+
+  @@index([releaseId])
+}
+
+// -------------------------------------------------------------
+// Storage & In-App Notifications
+// -------------------------------------------------------------
+
+model FileAsset {
+  id                String         @id @default(uuid())
+  organizationId    String
+  projectId         String?
+  relatedEntityType String
+  relatedEntityId   String
+  storageKey        String
+  originalFilename  String
+  mimeType          String
+  sizeBytes         Int
+  visibility        FileVisibility @default(INTERNAL)
+  uploadedById      String
+  createdAt         DateTime       @default(now())
+  deletedAt         DateTime?
+
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project           Project?       @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  uploadedBy        User           @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([projectId])
+  @@index([relatedEntityType, relatedEntityId])
+  @@index([visibility])
+  @@index([deletedAt])
+}
+
+model Notification {
+  id         String           @id @default(uuid())
+  userId     String
+  type       NotificationType
+  title      String
+  message    String
+  entityType String?
+  entityId   String?
+  linkUrl    String?
+  readAt     DateTime?
+  createdAt  DateTime         @default(now())
+
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([readAt])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String
+  action     String
+  entityType String
+  entityId   String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  actor      User     @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([actorId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+// -------------------------------------------------------------
+// Finance & Billing Models
+// -------------------------------------------------------------
+
+model Invoice {
+  id             String        @id @default(uuid())
+  organizationId String
+  projectId      String
+  invoiceNumber  String        @unique
+  status         InvoiceStatus @default(DRAFT)
+  subtotal       Decimal       @db.Decimal(12, 2)
+  discount       Decimal       @default(0) @db.Decimal(12, 2)
+  tax            Decimal       @default(0) @db.Decimal(12, 2)
+  total          Decimal       @db.Decimal(12, 2)
+  currency       String        @default("USD")
+  issuedDate     DateTime
+  dueDate        DateTime
+  notes          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
+
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  items          InvoiceItem[]
+  payments       Payment[]
+
+  @@index([organizationId])
+  @@index([projectId])
+  @@index([status])
+  @@index([dueDate])
+  @@index([deletedAt])
+}
+
+model InvoiceItem {
+  id          String   @id @default(uuid())
+  invoiceId   String
+  description String
+  quantity    Decimal  @db.Decimal(8, 2)
+  unitPrice   Decimal  @db.Decimal(12, 2)
+  amount      Decimal  @db.Decimal(12, 2)
+
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+model Payment {
+  id          String   @id @default(uuid())
+  invoiceId   String
+  amount      Decimal  @db.Decimal(12, 2)
+  paymentDate DateTime @default(now())
+  method      String   @default("BANK_TRANSFER")
+  reference   String?
+  recordedById String
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  recordedBy  User     @relation(fields: [recordedById], references: [id], onDelete: Restrict)
+
+  @@index([invoiceId])
+  @@index([paymentDate])
+}
+
+model ProjectActivity {
+  id         String            @id @default(uuid())
+  projectId  String
+  actorId    String
+  type       String
+  message    String
+  visibility CommentVisibility @default(INTERNAL)
+  entityType String?
+  entityId   String?
+  metadata   Json?
+  createdAt  DateTime          @default(now())
+
+  project    Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  actor      User              @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([projectId])
+  @@index([actorId])
+  @@index([visibility])
+  @@index([createdAt])
+}
+
+model SystemSetting {
+  key         String   @id
+  value       Json
+  updatedById String
+  updatedAt   DateTime @updatedAt
+}
