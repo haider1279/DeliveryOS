@@ -110,28 +110,48 @@ export function createApp(): Express {
   app.use('/api/audit', auditRoutes);
   app.use('/api/reports', reportRoutes);
 
-  // Serve frontend static files & SPA fallback (when built)
-  const frontendDist = path.resolve(process.cwd(), 'frontend/dist');
-  const frontendDistAlt = path.resolve(__dirname, '../../frontend/dist');
-  const distPath = fs.existsSync(frontendDist)
-    ? frontendDist
-    : fs.existsSync(frontendDistAlt)
-    ? frontendDistAlt
-    : null;
-
-  if (distPath) {
-    app.use(express.static(distPath));
-    app.get('*', (req: Request, res: Response, next: NextFunction) => {
-      if (req.path.startsWith('/api') || req.path.startsWith('/health')) {
-        return next();
+  // Helper to dynamically locate frontend/dist in mono-repo or nested runtimes
+  function getFrontendDistPath(): string | null {
+    const candidates = [
+      path.resolve(process.cwd(), 'frontend/dist'),
+      path.resolve(process.cwd(), '../frontend/dist'),
+      path.resolve(__dirname, '../../frontend/dist'),
+      path.resolve(__dirname, '../../../frontend/dist'),
+      path.resolve(__dirname, '../frontend/dist'),
+    ];
+    for (const dir of candidates) {
+      if (fs.existsSync(dir) && fs.existsSync(path.join(dir, 'index.html'))) {
+        return dir;
       }
-      const indexPath = path.join(distPath, 'index.html');
-      if (fs.existsSync(indexPath)) {
-        return res.sendFile(indexPath);
-      }
-      next();
-    });
+    }
+    return null;
   }
+
+  // Serve frontend static files
+  const staticCandidates = [
+    path.resolve(process.cwd(), 'frontend/dist'),
+    path.resolve(process.cwd(), '../frontend/dist'),
+    path.resolve(__dirname, '../../frontend/dist'),
+    path.resolve(__dirname, '../../../frontend/dist'),
+  ];
+  for (const staticDir of staticCandidates) {
+    if (fs.existsSync(staticDir)) {
+      app.use(express.static(staticDir));
+    }
+  }
+
+  // SPA fallback for all non-API GET requests (e.g. /dashboard, /projects, /settings)
+  app.get('*', (req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/health')) {
+      return next();
+    }
+    const distPath = getFrontendDistPath();
+    if (distPath) {
+      const indexPath = path.join(distPath, 'index.html');
+      return res.sendFile(indexPath);
+    }
+    next();
+  });
 
   // 404 Handler
   app.use((req: Request, _res: Response, next) => {
