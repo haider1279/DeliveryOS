@@ -3,8 +3,8 @@ import { test, expect } from '@playwright/test';
 test.describe('Authentication & route guards', () => {
   test('logs in as admin and lands on the internal dashboard', async ({ page }) => {
     await page.goto('/login');
-    await page.getByLabel(/email/i).fill('admin@deliveryos.local');
-    await page.getByLabel(/password/i).fill('DeliveryOS123!');
+    await page.getByLabel(/email/i).fill('haider2.euroshub@gmail.com');
+    await page.getByLabel(/password/i).fill('Admin#2026!DeliveryOS');
     await page.getByRole('button', { name: /sign in/i }).click();
 
     await expect(page).toHaveURL(/\/app\/dashboard/);
@@ -13,7 +13,7 @@ test.describe('Authentication & route guards', () => {
 
   test('rejects a wrong password with a visible error', async ({ page }) => {
     await page.goto('/login');
-    await page.getByLabel(/email/i).fill('admin@deliveryos.local');
+    await page.getByLabel(/email/i).fill('haider2.euroshub@gmail.com');
     await page.getByLabel(/password/i).fill('wrong-password');
     await page.getByRole('button', { name: /sign in/i }).click();
 
@@ -28,8 +28,8 @@ test.describe('Authentication & route guards', () => {
 
   test('client is redirected to the portal, not the internal app', async ({ page }) => {
     await page.goto('/login');
-    await page.getByLabel(/email/i).fill('client@acmecorp.local');
-    await page.getByLabel(/password/i).fill('DeliveryOS123!');
+    await page.getByLabel(/email/i).fill('haider6.euroshub@gmail.com');
+    await page.getByLabel(/password/i).fill('Client#2026!DeliveryOS');
     await page.getByRole('button', { name: /sign in/i }).click();
 
     await expect(page).toHaveURL(/\/portal\/projects/);
@@ -41,8 +41,8 @@ test.describe('Authentication & route guards', () => {
 
   test('admin cannot reach the client portal (redirected to dashboard)', async ({ page }) => {
     await page.goto('/login');
-    await page.getByLabel(/email/i).fill('admin@deliveryos.local');
-    await page.getByLabel(/password/i).fill('DeliveryOS123!');
+    await page.getByLabel(/email/i).fill('haider2.euroshub@gmail.com');
+    await page.getByLabel(/password/i).fill('Admin#2026!DeliveryOS');
     await page.getByRole('button', { name: /sign in/i }).click();
 
     await expect(page).toHaveURL(/\/app\/dashboard/);
@@ -53,8 +53,8 @@ test.describe('Authentication & route guards', () => {
 
   test('logs out back to the login page', async ({ page }) => {
     await page.goto('/login');
-    await page.getByLabel(/email/i).fill('dev@deliveryos.local');
-    await page.getByLabel(/password/i).fill('DeliveryOS123!');
+    await page.getByLabel(/email/i).fill('haider7.euroshub@gmail.com');
+    await page.getByLabel(/password/i).fill('Developer#2026!DeliveryOS');
     await page.getByRole('button', { name: /sign in/i }).click();
     await expect(page).toHaveURL(/\/app\/dashboard/);
 

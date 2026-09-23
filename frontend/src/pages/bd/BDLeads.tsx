@@ -171,7 +171,8 @@ export const BDLeads: React.FC = () => {
     try {
       setLoading(true);
       const res = await api.get<any>('/organizations', { pageSize: 100, search: search || undefined });
-      setOrgs(res?.orgs || []);
+      const orgList = Array.isArray(res) ? res : res?.orgs || res?.data || [];
+      setOrgs(orgList);
     } catch (err: any) {
       toast.error(err.message || 'Failed to load organizations');
     } finally {

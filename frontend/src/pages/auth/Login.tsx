@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { Sparkles, ArrowRight, Shield, UserCheck, Code, Bug, Building } from 'lucide-react';
+import { Sparkles, ArrowRight } from 'lucide-react';
 import { UserRole } from '@deliveryos/shared';
 
 export const Login: React.FC = () => {
-  const { login, devLoginAs } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -25,68 +25,6 @@ export const Login: React.FC = () => {
       setLoading(false);
     }
   };
-
-  const handleQuickLogin = async (personaEmail: string, isClient: boolean) => {
-    setError(null);
-    setLoading(true);
-    try {
-      await devLoginAs(personaEmail);
-      if (isClient) {
-        navigate('/portal/projects');
-      } else {
-        navigate('/app/dashboard');
-      }
-    } catch (err: any) {
-      setError(err.message || 'Quick login failed');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const personas = [
-    {
-      role: 'Super Admin',
-      email: 'superadmin@deliveryos.local',
-      icon: Shield,
-      desc: 'Elena Vance — Full system control & audit',
-      isClient: false,
-    },
-    {
-      role: 'Project Manager',
-      email: 'pm@deliveryos.local',
-      icon: UserCheck,
-      desc: 'Sarah Connor — Requirements, estimates & releases',
-      isClient: false,
-    },
-    {
-      role: 'Developer',
-      email: 'dev@deliveryos.local',
-      icon: Code,
-      desc: 'David Kim — Tasks, code & time tracking',
-      isClient: false,
-    },
-    {
-      role: 'QA Engineer',
-      email: 'qa@deliveryos.local',
-      icon: Bug,
-      desc: 'Priya Patel — Test runs & bug triage',
-      isClient: false,
-    },
-    {
-      role: 'Client (Acme Corp)',
-      email: 'client@acmecorp.local',
-      icon: Building,
-      desc: 'Alexander Pierce — Approvals, reviews & invoices',
-      isClient: true,
-    },
-    {
-      role: 'Client (Starlight Retail)',
-      email: 'client@starlightretail.local',
-      icon: Building,
-      desc: 'Chloe Zhao — Cross-tenant isolation demo',
-      isClient: true,
-    },
-  ];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-brand-950 to-slate-900 flex flex-col justify-center py-12 sm:px-6 lg:px-8 text-white">
@@ -142,53 +80,18 @@ export const Login: React.FC = () => {
             <button
               type="submit"
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 rounded-lg bg-brand-600 py-2.5 px-4 text-sm font-semibold text-white shadow-md hover:bg-brand-500 focus:outline-none transition-all disabled:opacity-50"
+              className="w-full flex items-center justify-center gap-2 rounded-lg bg-brand-600 py-2.5 px-4 text-sm font-semibold text-white shadow-md hover:bg-brand-500 focus:outline-none transition-all disabled:opacity-50 cursor-pointer"
             >
               {loading ? 'Signing in...' : 'Sign in'}
               <ArrowRight className="h-4 w-4" />
             </button>
           </form>
 
-          <p className="mt-4 text-center text-sm text-slate-400">
-            <Link to="/accept-invite" className="font-medium text-brand-300 hover:text-brand-200">
+          <p className="mt-6 text-center text-sm text-slate-400">
+            <Link to="/accept-invite" className="font-medium text-brand-300 hover:text-brand-200 transition-colors">
               Have an invitation? Accept it here
             </Link>
           </p>
-
-          {/* Quick Demo Personas */}
-          <div className="mt-8 pt-6 border-t border-white/10">
-            <span className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 text-center mb-3">
-              One-Click Role Switcher (Demo Mode)
-            </span>
-            <div className="grid grid-cols-1 gap-2">
-              {personas.map((p) => {
-                const Icon = p.icon;
-                return (
-                  <button
-                    key={p.email}
-                    onClick={() => handleQuickLogin(p.email, p.isClient)}
-                    disabled={loading}
-                    className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/20 text-left transition-all group"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="p-1.5 rounded-md bg-white/10 text-brand-300 group-hover:text-white">
-                        <Icon className="h-4 w-4" />
-                      </div>
-                      <div>
-                        <span className="block text-xs font-semibold text-slate-100">
-                          {p.role}
-                        </span>
-                        <span className="block text-[10px] text-slate-400">{p.desc}</span>
-                      </div>
-                    </div>
-                    <span className="text-xs text-slate-400 group-hover:text-brand-300 font-mono text-[10px]">
-                      {p.email}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
         </div>
       </div>
     </div>

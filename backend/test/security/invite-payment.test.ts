@@ -3,34 +3,70 @@ import request from 'supertest';
 import { app } from '../../src/app';
 import { prisma } from '../../src/config/prisma';
 import { authService } from '../../src/modules/auth/auth.service';
+import { OrganizationQualificationStatus, ProjectStatus, InvoiceStatus } from '@deliveryos/shared';
 
 /**
  * Regression tests for the invite-token hardening (C1/C4) and the
  * payment race guard (C3).
- *
- * - Invites return a single-use expiration-scoped token; the plaintext is
- *   never persisted; super-admin invites are impossible; admins cannot
- *   escalate a role above project manager; acceptance requires the exact
- *   token and clears it afterwards (replay fails).
- * - recordPayment rejects overpayment via the row-locked outstanding check.
- *
- * Requires the seeded local database. Any users created by this suite are
- * cleaned up in afterAll.
  */
 describe('Invite-token flow and payment guard (seeded database)', () => {
   let pmToken: string;
   let adminToken: string;
   let pmUser: any;
   let adminUser: any;
+  let testOrgId: string;
+  let testProjectId: string;
   let invoiceId: string;
   let createdEmails: string[] = [];
 
   beforeAll(async () => {
-    pmUser = await prisma.user.findUniqueOrThrow({ where: { email: 'pm@deliveryos.local' } });
-    adminUser = await prisma.user.findUniqueOrThrow({ where: { email: 'admin@deliveryos.local' } });
-    const invoice = await prisma.invoice.findFirstOrThrow({
-      where: { invoiceNumber: 'INV-2026-001' },
-      select: { id: true },
+    pmUser = await prisma.user.findUniqueOrThrow({ where: { email: 'haider8.euroshub@gmail.com' } });
+    adminUser = await prisma.user.findUniqueOrThrow({ where: { email: 'haider2.euroshub@gmail.com' } });
+
+    // Create test organization and project for invoice test
+    const testOrg = await prisma.organization.create({
+      data: {
+        name: `Test Org Invite ${Date.now()}`,
+        slug: `test-org-invite-${Date.now()}`,
+        contactEmail: `contact-${Date.now()}@testorg.com`,
+        qualificationStatus: OrganizationQualificationStatus.APPROVED,
+      },
+    });
+    testOrgId = testOrg.id;
+
+    const testProject = await prisma.project.create({
+      data: {
+        name: `Test Project ${Date.now()}`,
+        code: `TEST-${Math.floor(Math.random() * 100000)}`,
+        organizationId: testOrgId,
+        projectManagerId: pmUser.id,
+        status: ProjectStatus.ACTIVE,
+        members: {
+          create: [{ userId: pmUser.id, membershipRole: 'PROJECT_MANAGER' }],
+        },
+      },
+    });
+    testProjectId = testProject.id;
+
+    const invoice = await prisma.invoice.create({
+      data: {
+        organizationId: testOrgId,
+        projectId: testProjectId,
+        invoiceNumber: `INV-TEST-${Date.now()}`,
+        status: InvoiceStatus.ISSUED,
+        subtotal: 10000,
+        discount: 0,
+        tax: 0,
+        total: 10000,
+        currency: 'USD',
+        issuedDate: new Date(),
+        dueDate: new Date(Date.now() + 86400000 * 30),
+        items: {
+          create: [
+            { description: 'Phase 1 Delivery', quantity: 1, unitPrice: 10000, amount: 10000 },
+          ],
+        },
+      },
     });
     invoiceId = invoice.id;
 
@@ -39,7 +75,21 @@ describe('Invite-token flow and payment guard (seeded database)', () => {
   });
 
   afterAll(async () => {
-    await prisma.user.deleteMany({ where: { email: { in: createdEmails } } });
+    if (invoiceId) {
+      await prisma.payment.deleteMany({ where: { invoiceId } });
+      await prisma.invoiceItem.deleteMany({ where: { invoiceId } });
+      await prisma.invoice.deleteMany({ where: { id: invoiceId } });
+    }
+    if (testProjectId) {
+      await prisma.projectMember.deleteMany({ where: { projectId: testProjectId } });
+      await prisma.project.deleteMany({ where: { id: testProjectId } });
+    }
+    if (testOrgId) {
+      await prisma.organization.deleteMany({ where: { id: testOrgId } });
+    }
+    if (createdEmails.length > 0) {
+      await prisma.user.deleteMany({ where: { email: { in: createdEmails } } });
+    }
     await prisma.$disconnect();
   });
 

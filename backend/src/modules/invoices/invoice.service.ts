@@ -312,8 +312,8 @@ export class InvoiceService {
       throw AppError.notFound('Invoice not found');
     }
 
-    // Role isolation: developers/QA cannot view invoices
-    if (actor.role === UserRole.DEVELOPER || actor.role === UserRole.QA) {
+    // Role isolation: developers/QA/BD cannot view invoices
+    if (actor.role === UserRole.DEVELOPER || actor.role === UserRole.QA || actor.role === UserRole.BD) {
       throw AppError.forbidden('You do not have permission to view billing invoices');
     }
 
@@ -330,8 +330,8 @@ export class InvoiceService {
    * Lists invoices with pagination and filters, scoped to accessible projects.
    */
   async listInvoices(query: PaginationQueryInput, actor: AuthenticatedUser) {
-    // Developers & QA cannot access billing
-    if (actor.role === UserRole.DEVELOPER || actor.role === UserRole.QA) {
+    // Developers, QA & BD cannot access billing
+    if (actor.role === UserRole.DEVELOPER || actor.role === UserRole.QA || actor.role === UserRole.BD) {
       throw AppError.forbidden('You do not have permission to view invoices');
     }
 

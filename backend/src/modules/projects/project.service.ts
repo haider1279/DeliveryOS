@@ -2,7 +2,7 @@ import { prisma } from '../../config/prisma';
 import { AppError } from '../../errors/AppError';
 import { auditService } from '../../services/audit.service';
 import { activityService } from '../../services/notification.service';
-import { UserRole, UserStatus, CommentVisibility, ProjectStatus } from '@deliveryos/shared';
+import { UserRole, UserStatus, CommentVisibility, ProjectStatus, OrganizationQualificationStatus } from '@deliveryos/shared';
 import type { CreateProjectDTO, UpdateProjectDTO, AddProjectMemberDTO, AuthenticatedUser } from '@deliveryos/shared';
 import { requireProjectAccess, getAccessibleProjectIds, assertProjectWritable } from '../../services/project-access.service';
 
@@ -24,6 +24,9 @@ export const projectService = {
     if (!org) throw new AppError('NOT_FOUND', 'Organization not found', 404);
     if (org.status === 'INACTIVE') {
       throw new AppError('FORBIDDEN', 'This organization is inactive and cannot accept new projects', 403);
+    }
+    if (org.qualificationStatus && org.qualificationStatus !== OrganizationQualificationStatus.APPROVED) {
+      throw new AppError('BUSINESS_RULE_VIOLATION', 'Projects can only be created for qualified and approved organizations', 400);
     }
     if (!pm || pm.status !== UserStatus.ACTIVE) {
       throw new AppError('BUSINESS_RULE_VIOLATION', 'Project manager must be an active PROJECT_MANAGER user', 400);

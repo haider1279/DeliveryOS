@@ -52,13 +52,14 @@ export const ProjectList: React.FC = () => {
     setIsCreateOpen(true);
     try {
       const [orgsData, usersData] = await Promise.all([
-        api.get<any>('/organizations').then((r: any) => r.orgs || r || []),
-        api.get<any>('/users').then((r: any) => r.users || r || []),
+        api.get<any>('/organizations').then((r: any) => (Array.isArray(r) ? r : r.orgs || r.data || [])),
+        api.get<any>('/users').then((r: any) => (Array.isArray(r) ? r : r.users || r.data || [])),
       ]);
-      setOrgs(orgsData);
-      const eligiblePms = usersData.filter((u: any) => u.role === UserRole.PROJECT_MANAGER);
+      const approvedOrgs = (orgsData || []).filter((o: any) => !o.qualificationStatus || o.qualificationStatus === 'APPROVED');
+      setOrgs(approvedOrgs);
+      const eligiblePms = (usersData || []).filter((u: any) => u.role === UserRole.PROJECT_MANAGER);
       setPms(eligiblePms);
-      if (orgsData.length > 0) setOrgId(orgsData[0].id);
+      if (approvedOrgs.length > 0) setOrgId(approvedOrgs[0].id);
       if (eligiblePms.length > 0) setPmId(eligiblePms[0].id);
     } catch {
       // ignore

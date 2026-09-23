@@ -1,13 +1,13 @@
 # Setup & Local Development Guide — DeliveryOS
 
 ## Prerequisites
-- Node.js >= 18.x (tested on v24.21.0)
+- Node.js >= 18.x
 - npm >= 9.x
-- PostgreSQL database instance (local PostgreSQL or Supabase / Neon cloud database)
+- PostgreSQL database instance (local PostgreSQL or cloud database)
 
 ## Quickstart
 
-1. **Clone and Install Dependencies**
+1. **Install Dependencies**
    ```bash
    npm install
    ```
@@ -16,9 +16,13 @@
    ```bash
    cp .env.example .env
    ```
-   Update `.env` with your PostgreSQL connection string:
+   Update `.env` with your PostgreSQL connection string and environment settings:
    ```env
    DATABASE_URL="postgresql://postgres:postgres@localhost:5432/deliveryos?schema=public"
+   JWT_SECRET="dev-insecure-jwt-secret-min-32-chars-change-in-prod"
+   PORT=4000
+   NODE_ENV="development"
+   CLIENT_URL="http://localhost:5173"
    ```
 
 3. **Initialize Database**
@@ -29,7 +33,7 @@
    # Push schema to database
    npm run db:push
 
-   # Seed database with demo agency data
+   # Seed database with the 7 authoritative development role accounts
    npm run db:seed
    ```
 
@@ -39,13 +43,28 @@
    ```
    - Frontend: `http://localhost:5173`
    - Backend API: `http://localhost:4000`
-   - API Health Check: `http://localhost:4000/api/health`
+   - API Health Check: `http://localhost:4000/health`
 
-5. **Demo Accounts Seeded**:
-   - Super Admin: `superadmin@deliveryos.local`
-   - Admin: `admin@deliveryos.local`
-   - Project Manager: `pm@deliveryos.local`
-   - Developer: `dev@deliveryos.local`
-   - QA Engineer: `qa@deliveryos.local`
-   - Client User: `client@acmecorp.local`
-   (Password for seeded test accounts in development: `DeliveryOS@2026`)
+5. **Authoritative Development Accounts (Seeded)**:
+   - Super Admin: `haider1.euroshub@gmail.com`
+   - Admin: `haider2.euroshub@gmail.com`
+   - BD: `haider4.euroshub@gmail.com`
+   - QA Engineer: `haider5.euroshub@gmail.com`
+   - Client User: `haider6.euroshub@gmail.com`
+   - Developer: `haider7.euroshub@gmail.com`
+   - Project Manager: `haider8.euroshub@gmail.com`
+
+   *(See `.env.example` comments for development seed credentials).*
+
+6. **Running Test Suites**
+   ```bash
+   # Run all backend unit, security, and access-control tests
+   npm test -w backend
+
+   # Run typechecks
+   npm run typecheck -w backend
+   npm run typecheck -w frontend
+
+   # Run Playwright E2E tests
+   npx playwright test
+   ```

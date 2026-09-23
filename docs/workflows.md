@@ -1,6 +1,24 @@
 # Workflows & State Machines — DeliveryOS
 
-## 1. Requirement Lifecycle State Machine
+## 1. Client Acquisition & Qualification Lifecycle (BD / CRM)
+
+```
+[PROSPECT]
+   │
+   ├─► [REJECTED] (Disqualified lead)
+   ▼
+[APPROVED] (Qualified prospective organization)
+   │
+   ├─► Admin invites Client contact (User: INVITED -> ACTIVE)
+   ▼
+[ACTIVE PROJECT CREATION] (PM / Admin assigns project to qualified organization)
+```
+
+- BD creates new organization as `PROSPECT`.
+- BD / Admin assesses the prospect and transitions to `APPROVED` (or `REJECTED`).
+- Projects may only be created for `APPROVED` organizations.
+
+## 2. Requirement Lifecycle State Machine
 
 ```
 [DRAFT]
@@ -52,13 +70,13 @@ The backend transition map is strictly enforced by `RequirementService.transitio
 - `CLIENT_REVIEW -> COMPLETED | IN_DEVELOPMENT` (Client)
 - `* -> CANCELLED` (PM/Admin only)
 
-## 2. Bug Lifecycle State Machine
+## 3. Bug Lifecycle State Machine
 ```
 [OPEN] -> [TRIAGED] -> [IN_PROGRESS] -> [FIXED] -> [READY_FOR_RETEST] -> [CLOSED]
                                                                      └──> [REOPENED] -> [IN_PROGRESS]
 ```
 
-## 3. Invoice Lifecycle & Authoritative Status Recomputation
+## 4. Invoice Lifecycle & Authoritative Status Recomputation
 Invoices do not have arbitrary manual status edits. Status is calculated authoritatively from the sum of verified `Payment` records:
 - Total Payments == 0 and Not Sent: `DRAFT`
 - Issued and Total Payments == 0: `ISSUED`
@@ -67,7 +85,7 @@ Invoices do not have arbitrary manual status edits. Status is calculated authori
 - Issued and Due Date Past and Total Payments < Total Amount: `OVERDUE`
 - Cancelled: `VOID`
 
-## 4. Project Health Deterministic Calculation Formula
+## 5. Project Health Deterministic Calculation Formula
 A project's health is derived deterministically from live signals:
 - **DELAYED**: Current date > `targetDate` and status NOT in (`COMPLETED`, `CANCELLED`). Reason: *"Project is past target completion date."*
 - **BLOCKED**: At least one open `Task` with `status = 'BLOCKED'`. Reason: *"One or more active tasks are marked blocked."*
@@ -78,7 +96,7 @@ A project's health is derived deterministically from live signals:
   4. Target date within 7 days and completed tasks < 70%. Reason: *"Deadline within 7 days with significant work remaining."*
 - **ON_TRACK**: None of the above apply.
 
-## 5. Project Progress Calculation Formula
+## 6. Project Progress Calculation Formula
 `Progress % = (Completed Eligible Requirements + Completed Eligible Tasks) / (Total Eligible Requirements + Total Eligible Tasks) * 100`
 - Excludes items with status `CANCELLED`.
 - If no requirements or tasks exist yet, return `null` ("No delivery progress yet"), rather than a misleading 0%.

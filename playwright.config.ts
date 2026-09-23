@@ -34,4 +34,18 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], channel: 'msedge' },
     },
   ],
+  webServer: [
+    {
+      command: 'npm run dev:backend',
+      url: 'http://localhost:4000/health',
+      reuseExistingServer: !process.env.CI,
+      timeout: 30_000,
+    },
+    {
+      command: 'npm run dev:frontend',
+      url: 'http://localhost:5173',
+      reuseExistingServer: !process.env.CI,
+      timeout: 30_000,
+    },
+  ],
 });

@@ -8,7 +8,7 @@ import { config } from '../../src/config';
 import { authService } from '../../src/modules/auth/auth.service';
 import { emailService } from '../../src/services/email.service';
 import { auditService } from '../../src/services/audit.service';
-import { UserRole, UserStatus } from '@deliveryos/shared';
+import { UserRole, UserStatus, OrganizationQualificationStatus, ProjectStatus } from '@deliveryos/shared';
 
 /**
  * Regression tests for the four confirmed delivery defects:
@@ -53,13 +53,13 @@ describe('DeliveryOS defect regressions (seeded database)', () => {
 
   beforeAll(async () => {
     const superUser = await prisma.user.findUniqueOrThrow({
-      where: { email: 'superadmin@deliveryos.local' },
+      where: { email: 'haider1.euroshub@gmail.com' },
     });
     const adminUser = await prisma.user.findUniqueOrThrow({
-      where: { email: 'admin@deliveryos.local' },
+      where: { email: 'haider2.euroshub@gmail.com' },
     });
     const pmUser = await prisma.user.findUniqueOrThrow({
-      where: { email: 'pm@deliveryos.local' },
+      where: { email: 'haider8.euroshub@gmail.com' },
     });
     superToken = authService.createDevToken({
       id: superUser.id,
@@ -77,19 +77,35 @@ describe('DeliveryOS defect regressions (seeded database)', () => {
       role: pmUser.role,
     });
 
-    const acme = await prisma.organization.findUniqueOrThrow({
-      where: { slug: 'acme-corp' },
+    const acme = await prisma.organization.create({
+      data: {
+        name: `Acme Corp ${suffix}`,
+        slug: `acme-corp-${suffix}`,
+        contactEmail: `acme-${suffix}@test.com`,
+        qualificationStatus: OrganizationQualificationStatus.APPROVED,
+      },
     });
-    const starlight = await prisma.organization.findUniqueOrThrow({
-      where: { slug: 'starlight-retail' },
+    const starlight = await prisma.organization.create({
+      data: {
+        name: `Starlight Retail ${suffix}`,
+        slug: `starlight-retail-${suffix}`,
+        contactEmail: `starlight-${suffix}@test.com`,
+        qualificationStatus: OrganizationQualificationStatus.APPROVED,
+      },
     });
     acmeOrgId = acme.id;
     starlightOrgId = starlight.id;
-    const acmeProject = await prisma.project.findFirstOrThrow({
-      where: { code: 'ACME-WMS' },
-      select: { id: true },
+    const acmeProject = await prisma.project.create({
+      data: {
+        name: `ACME WMS ${suffix}`,
+        code: `ACM${(suffix % 100000).toString().padStart(5, '0')}`,
+        organizationId: acmeOrgId,
+        projectManagerId: pmUser.id,
+        status: ProjectStatus.ACTIVE,
+      },
     });
     acmeProjectId = acmeProject.id;
+    createdProjectIds.push(acmeProjectId);
   });
 
   afterAll(async () => {
@@ -112,6 +128,8 @@ describe('DeliveryOS defect regressions (seeded database)', () => {
     await prisma.user.deleteMany({
       where: { email: { in: createdEmails } },
     });
+    if (acmeOrgId) await prisma.organization.deleteMany({ where: { id: acmeOrgId } });
+    if (starlightOrgId) await prisma.organization.deleteMany({ where: { id: starlightOrgId } });
     await prisma.$disconnect();
   });
 
@@ -321,7 +339,7 @@ describe('DeliveryOS defect regressions (seeded database)', () => {
 
     it('rejects changing your own role via full endpoint', async () => {
       const superUser = await prisma.user.findUniqueOrThrow({
-        where: { email: 'superadmin@deliveryos.local' },
+        where: { email: 'haider1.euroshub@gmail.com' },
       });
       const res = await request(app)
         .patch(`/api/users/${superUser.id}/role`)
@@ -363,7 +381,7 @@ describe('DeliveryOS defect regressions (seeded database)', () => {
 
     it('(regression) super admin can assign the agency-level PM (organizationId null) to an org project', async () => {
       const seedPm = await prisma.user.findUniqueOrThrow({
-        where: { email: 'pm@deliveryos.local' },
+        where: { email: 'haider8.euroshub@gmail.com' },
       });
       const res = await request(app)
         .post('/api/projects')
@@ -461,12 +479,8 @@ describe('DeliveryOS defect regressions (seeded database)', () => {
         email: pmNoAccess.email,
         role: pmNoAccess.role,
       });
-      const starEcomm = await prisma.project.findFirstOrThrow({
-        where: { code: 'STAR-ECOMM' },
-        select: { id: true },
-      });
       const blocked = await request(app)
-        .get(`/api/projects/${starEcomm.id}`)
+        .get(`/api/projects/${acmeProjectId}`)
         .set('Authorization', `Bearer ${pmNoAccessToken}`);
       expect(blocked.status).toBe(404);
     });
@@ -487,11 +501,18 @@ describe('DeliveryOS defect regressions (seeded database)', () => {
         .set('Authorization', `Bearer ${pmForeignToken}`);
       expect(ownProject.status).toBe(200);
 
-      // Uses shared fixture ids to prove the membership-scoped boundary.
-      const foreignProject = await prisma.project.findFirstOrThrow({
-        where: { code: 'STAR-ECOMM' },
-        select: { id: true },
+      // Uses fixture project where pmForeign is NOT a member (e.g. starlight project)
+      const foreignProject = await prisma.project.create({
+        data: {
+          name: `Foreign Project ${Date.now()}`,
+          code: `FOR${Math.floor(Math.random() * 100000)}`,
+          organizationId: starlightOrgId,
+          projectManagerId: pmAcme.id,
+          status: ProjectStatus.ACTIVE,
+        },
       });
+      createdProjectIds.push(foreignProject.id);
+
       const blocked = await request(app)
         .get(`/api/projects/${foreignProject.id}`)
         .set('Authorization', `Bearer ${pmForeignToken}`);

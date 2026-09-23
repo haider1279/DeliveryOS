@@ -85,7 +85,9 @@ export const InternalLayout: React.FC = () => {
     ...(!isBD ? [
       { label: 'Projects', path: '/app/projects', icon: FolderKanban },
       { label: 'My Work', path: '/app/my-work', icon: CheckSquare },
-      { label: 'QA & Bugs', path: '/app/qa', icon: Bug },
+      ...(isRole([UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.QA])
+        ? [{ label: 'QA & Bugs', path: '/app/qa', icon: Bug }]
+        : []),
     ] : []),
     // CRM / acquisition pipeline — visible to BD + ADMIN + SUPER_ADMIN
     ...(isRole([UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.BD])

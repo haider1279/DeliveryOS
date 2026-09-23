@@ -29,7 +29,6 @@ interface AuthContextType {
   login: (email: string, passwordPlain: string) => Promise<AuthUser>;
   setSession: (token: string, user: AuthUser) => void;
   logout: () => void;
-  devLoginAs: (email: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -83,10 +82,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const devLoginAs = async (email: string) => {
-    await login(email, 'DeliveryOS123!');
-  };
-
   const setSession = (token: string, user: AuthUser) => {
     localStorage.setItem('deliveryos_token', token);
     setToken(token);
@@ -100,7 +95,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, isLoading, login, setSession, logout, devLoginAs }}>
+    <AuthContext.Provider value={{ user, token, isLoading, login, setSession, logout }}>
       {children}
     </AuthContext.Provider>
   );
