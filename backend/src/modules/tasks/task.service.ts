@@ -63,7 +63,7 @@ export class TaskService {
       throw AppError.notFound('Project not found');
     }
 
-    // 2. If assignee provided, verify active membership
+    // 2. If assignee provided, verify active membership and role authorization
     if (input.assigneeId) {
       const activeMember = await prisma.projectMember.findFirst({
         where: {
@@ -71,9 +71,16 @@ export class TaskService {
           userId: input.assigneeId,
           leftAt: null,
         },
+        include: { user: true },
       });
       if (!activeMember) {
         throw AppError.badRequest('Assigned user is not an active member of this project');
+      }
+      if (
+        actor.role === UserRole.PROJECT_MANAGER &&
+        activeMember.user.role !== UserRole.DEVELOPER
+      ) {
+        throw AppError.forbidden('Project managers can only assign development tasks to project developers');
       }
     }
 
@@ -187,9 +194,16 @@ export class TaskService {
           userId: input.assigneeId,
           leftAt: null,
         },
+        include: { user: true },
       });
       if (!activeMember) {
         throw AppError.badRequest('Assigned user is not an active member of this project');
+      }
+      if (
+        actor.role === UserRole.PROJECT_MANAGER &&
+        activeMember.user.role !== UserRole.DEVELOPER
+      ) {
+        throw AppError.forbidden('Project managers can only assign development tasks to project developers');
       }
     }
 

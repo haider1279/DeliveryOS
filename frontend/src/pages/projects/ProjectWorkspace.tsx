@@ -1426,18 +1426,31 @@ export const ProjectWorkspace: React.FC = () => {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700">Assignee</label>
-              <select
-                value={taskAssigneeId}
-                onChange={(e) => setTaskAssigneeId(e.target.value)}
-                className="mt-1 w-full px-3 py-2 rounded-lg border text-xs focus:outline-none"
-              >
-                <option value="">Unassigned</option>
-                {project.members?.filter((m: any) => !m.leftAt).map((m: any) => (
-                  <option key={m.id} value={m.user?.id}>
-                    {m.user?.profile?.displayName || m.user?.email}
-                  </option>
-                ))}
-              </select>
+              {(() => {
+                const activeMembers = project.members?.filter((m: any) => !m.leftAt) || [];
+                const eligibleAssignees = activeMembers.filter((m: any) => {
+                  if (user?.role === UserRole.PROJECT_MANAGER) {
+                    return m.user?.role === UserRole.DEVELOPER || m.membershipRole === 'DEVELOPER';
+                  }
+                  return true;
+                });
+                return (
+                  <select
+                    value={taskAssigneeId}
+                    onChange={(e) => setTaskAssigneeId(e.target.value)}
+                    className="mt-1 w-full px-3 py-2 rounded-lg border text-xs focus:outline-none"
+                  >
+                    <option value="">
+                      {eligibleAssignees.length === 0 ? 'No eligible developers on project' : 'Unassigned'}
+                    </option>
+                    {eligibleAssignees.map((m: any) => (
+                      <option key={m.id} value={m.user?.id}>
+                        {m.user?.profile?.displayName || m.user?.email}
+                      </option>
+                    ))}
+                  </select>
+                );
+              })()}
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700">Priority</label>

@@ -1,4 +1,6 @@
-import express, { Express, Request, Response } from 'express';
+import express, { Express, Request, Response, NextFunction } from 'express';
+import path from 'path';
+import fs from 'fs';
 import helmet from 'helmet';
 import cors from 'cors';
 import compression from 'compression';
@@ -107,6 +109,29 @@ export function createApp(): Express {
   app.use('/api/storage', storageRoutes);
   app.use('/api/audit', auditRoutes);
   app.use('/api/reports', reportRoutes);
+
+  // Serve frontend static files & SPA fallback (when built)
+  const frontendDist = path.resolve(process.cwd(), 'frontend/dist');
+  const frontendDistAlt = path.resolve(__dirname, '../../frontend/dist');
+  const distPath = fs.existsSync(frontendDist)
+    ? frontendDist
+    : fs.existsSync(frontendDistAlt)
+    ? frontendDistAlt
+    : null;
+
+  if (distPath) {
+    app.use(express.static(distPath));
+    app.get('*', (req: Request, res: Response, next: NextFunction) => {
+      if (req.path.startsWith('/api') || req.path.startsWith('/health')) {
+        return next();
+      }
+      const indexPath = path.join(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        return res.sendFile(indexPath);
+      }
+      next();
+    });
+  }
 
   // 404 Handler
   app.use((req: Request, _res: Response, next) => {
