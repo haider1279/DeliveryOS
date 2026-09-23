@@ -24,15 +24,32 @@ if (!jwtSecret && nodeEnv === 'production') {
   throw new Error('Required environment variable JWT_SECRET (or SUPABASE_JWT_SECRET) is missing in production');
 }
 
+const defaultCorsOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'https://delivery-os-frontend.vercel.app',
+];
+
+const rawOrigins = [
+  process.env['FRONTEND_URL'],
+  process.env['CORS_ORIGIN'],
+  ...defaultCorsOrigins,
+].filter(Boolean) as string[];
+
+const parsedCorsOrigins = new Set<string>();
+for (const item of rawOrigins) {
+  item.split(',').forEach((origin) => {
+    const trimmed = origin.trim().replace(/\/$/, '');
+    if (trimmed) parsedCorsOrigins.add(trimmed);
+  });
+}
+
 export const config = {
   port: parseInt(process.env['PORT'] ?? '4000', 10),
   nodeEnv,
   frontendUrl: process.env['FRONTEND_URL'] ?? 'http://localhost:5173',
-  corsOrigins: [
-    process.env['FRONTEND_URL'] ?? 'http://localhost:5173',
-    'http://localhost:3000',
-    'http://127.0.0.1:5173',
-  ],
+  corsOrigins: Array.from(parsedCorsOrigins),
   isDev: nodeEnv === 'development',
   isProd: nodeEnv === 'production',
   isTest: nodeEnv === 'test',
