@@ -31,7 +31,11 @@ class ApiClient {
   }
 
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const url = endpoint.startsWith('http') ? endpoint : `/api${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+    const rawBase = ((import.meta as any).env?.VITE_API_BASE_URL as string | undefined) || '/api';
+    const apiBaseUrl = rawBase.replace(/\/$/, '');
+    const url = endpoint.startsWith('http')
+      ? endpoint
+      : `${apiBaseUrl}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
 
     const res = await fetch(url, {
       ...options,
