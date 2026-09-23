@@ -1,10 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Plus, Shield, UserX, UserCheck } from 'lucide-react';
+import { Users, Plus, Shield, UserX, UserCheck, Link2, Copy, Check } from 'lucide-react';
 import { api } from '../../api/client';
 import { Modal } from '../../components/ui/Modal';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
+import { useToast } from '../../context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
+import { UserRole } from '@deliveryos/shared';
 
 export const TeamManagement: React.FC = () => {
+  const { user: actor } = useAuth();
+  const canManageRoles =
+    actor?.role === UserRole.SUPER_ADMIN || actor?.role === UserRole.ADMIN;
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
@@ -15,6 +21,9 @@ export const TeamManagement: React.FC = () => {
   const [lastName, setLastName] = useState('');
   const [role, setRole] = useState('DEVELOPER');
   const [jobTitle, setJobTitle] = useState('');
+  const [inviteResult, setInviteResult] = useState<any>(null);
+  const [copied, setCopied] = useState(false);
+  const toast = useToast();
 
   const fetchUsers = async () => {
     try {
@@ -34,7 +43,7 @@ export const TeamManagement: React.FC = () => {
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await api.post('/users/invite', {
+      const result = await api.post('/users/invite', {
         email,
         firstName,
         lastName,
@@ -45,9 +54,24 @@ export const TeamManagement: React.FC = () => {
       setEmail('');
       setFirstName('');
       setLastName('');
+      setRole('DEVELOPER');
+      setJobTitle('');
+      setInviteResult(result);
+      toast.success('Invitation created — share the one-time link.');
       fetchUsers();
     } catch (err: any) {
-      alert(err.message || 'Failed to invite user');
+      toast.error(err.message || 'Failed to invite user');
+    }
+  };
+
+  const handleCopyLink = async () => {
+    if (!inviteResult?.inviteUrl) return;
+    try {
+      await navigator.clipboard.writeText(inviteResult.inviteUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error('Could not copy — select and copy the link manually.');
     }
   };
 
@@ -55,9 +79,21 @@ export const TeamManagement: React.FC = () => {
     const nextStatus = currentStatus === 'ACTIVE' ? 'DEACTIVATED' : 'ACTIVE';
     try {
       await api.patch(`/users/${userId}/status`, { status: nextStatus });
+      toast.success(nextStatus === 'ACTIVE' ? 'User activated.' : 'User deactivated.');
       fetchUsers();
     } catch (err: any) {
-      alert(err.message || 'Failed to change status');
+      toast.error(err.message || 'Failed to change status');
+    }
+  };
+
+  const handleChangeRole = async (userId: string, newRole: string) => {
+    try {
+      await api.patch(`/users/${userId}/role`, { role: newRole });
+      toast.success('System role updated.');
+      fetchUsers();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update role');
+      fetchUsers();
     }
   };
 
@@ -102,9 +138,32 @@ export const TeamManagement: React.FC = () => {
                     <span className="block text-[11px] text-slate-400">{u.email}</span>
                   </td>
                   <td className="px-6 py-3.5">
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 uppercase">
-                      {u.role}
-                    </span>
+                    {canManageRoles &&
+                    actor?.id !== u.id &&
+                    !(u.role === UserRole.SUPER_ADMIN && actor?.role === UserRole.ADMIN) ? (
+                      <select
+                        value={u.role}
+                        onChange={(e) => handleChangeRole(u.id, e.target.value)}
+                        aria-label={`Change role for ${u.email}`}
+                        className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] font-bold uppercase text-slate-700 bg-white focus:outline-none focus:border-brand-500"
+                      >
+                        {[
+                          UserRole.DEVELOPER,
+                          UserRole.QA,
+                          UserRole.PROJECT_MANAGER,
+                          UserRole.CLIENT,
+                          UserRole.ADMIN,
+                        ].map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 uppercase">
+                        {u.role}
+                      </span>
+                    )}
                   </td>
                   <td className="px-6 py-3.5 text-slate-600">{u.organization?.name || 'Agency Core'}</td>
                   <td className="px-6 py-3.5">
@@ -185,6 +244,7 @@ export const TeamManagement: React.FC = () => {
               <option value="DEVELOPER">DEVELOPER</option>
               <option value="QA">QA</option>
               <option value="PROJECT_MANAGER">PROJECT_MANAGER</option>
+              <option value="CLIENT">CLIENT</option>
               <option value="ADMIN">ADMIN</option>
             </select>
           </div>
@@ -204,6 +264,47 @@ export const TeamManagement: React.FC = () => {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Invite Link Modal (one-time token) */}
+      <Modal
+        isOpen={!!inviteResult}
+        onClose={() => setInviteResult(null)}
+        title="Invitation Ready"
+      >
+        <div className="space-y-4">
+          <p className="text-xs text-slate-600">
+            <strong className="text-slate-800">
+              {inviteResult?.user?.profile?.firstName || inviteResult?.user?.email}
+            </strong>{' '}
+            has been invited. Share this <strong>one-time link</strong> — it expires on{' '}
+            {inviteResult?.inviteTokenExpiresAt
+              ? new Date(inviteResult.inviteTokenExpiresAt).toLocaleDateString()
+              : 'in 7 days'}{' '}
+            and can only be used once.
+          </p>
+          <div className="flex items-center gap-2 p-3 bg-slate-50 border border-slate-200 rounded-xl">
+            <Link2 className="h-4 w-4 text-indigo-500 flex-shrink-0" />
+            <span className="flex-1 text-[11px] text-slate-600 break-all">{inviteResult?.inviteUrl}</span>
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t">
+            <button
+              type="button"
+              onClick={() => setInviteResult(null)}
+              className="px-3 py-1.5 rounded text-xs text-slate-600 hover:bg-slate-100"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              onClick={handleCopyLink}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700"
+            >
+              {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              {copied ? 'Copied!' : 'Copy Invite Link'}
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

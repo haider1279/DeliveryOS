@@ -1,6 +1,7 @@
 export enum UserRole {
   SUPER_ADMIN = 'SUPER_ADMIN',
   ADMIN = 'ADMIN',
+  BD = 'BD',
   PROJECT_MANAGER = 'PROJECT_MANAGER',
   DEVELOPER = 'DEVELOPER',
   QA = 'QA',
@@ -17,6 +18,18 @@ export enum UserStatus {
 export enum OrganizationStatus {
   ACTIVE = 'ACTIVE',
   INACTIVE = 'INACTIVE',
+}
+
+/**
+ * Client-acquisition lifecycle owned by the business-development (BD) role.
+ * BD creates an organization as a PROSPECT; qualification moves it to APPROVED
+ * (handed off to ADMIN for onboarding) or REJECTED. Existing/onboarded
+ * organizations default to APPROVED so tenant behaviour is unchanged.
+ */
+export enum OrganizationQualificationStatus {
+  PROSPECT = 'PROSPECT',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
 }
 
 export enum ProjectStatus {

@@ -22,6 +22,7 @@
     "seed": "npm run seed -w backend"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "concurrently": "^9.1.2",
     "prisma": "^6.4.1",
     "tsx": "^4.19.3",

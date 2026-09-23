@@ -2,21 +2,31 @@ import { prisma } from '../../config/prisma';
 import { AppError } from '../../errors/AppError';
 import { auditService } from '../../services/audit.service';
 import { notificationService, activityService } from '../../services/notification.service';
+import { requireProjectAccess, getAccessibleProjectIds, assertProjectWritable } from '../../services/project-access.service';
 import {
   UserRole,
   InvoiceStatus,
   CommentVisibility,
   NotificationType,
+  AuthenticatedUser,
   CreateInvoiceInput,
   RecordPaymentInput,
   PaginationQueryInput,
 } from '@deliveryos/shared';
 
+const BILLING_ROLES = [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER];
+
 export class InvoiceService {
   /**
    * Creates a draft invoice with items and computes subtotal and total.
    */
-  async createInvoice(input: CreateInvoiceInput, creatorId: string) {
+  async createInvoice(input: CreateInvoiceInput, actor: AuthenticatedUser) {
+    if (!BILLING_ROLES.includes(actor.role)) {
+      throw AppError.forbidden('You do not have permission to create invoices');
+    }
+
+    await assertProjectWritable(actor, input.projectId);
+
     const project = await prisma.project.findFirst({
       where: { id: input.projectId, organizationId: input.organizationId, deletedAt: null },
     });
@@ -75,7 +85,7 @@ export class InvoiceService {
     });
 
     await auditService.log({
-      actorId: creatorId,
+      actorId: actor.id,
       action: 'INVOICE_CREATED',
       entityType: 'Invoice',
       entityId: invoice.id,
@@ -88,12 +98,18 @@ export class InvoiceService {
   /**
    * Issues an invoice, moving status from DRAFT to ISSUED and notifying the client.
    */
-  async issueInvoice(id: string, actorId: string) {
+  async issueInvoice(id: string, actor: AuthenticatedUser) {
+    if (!BILLING_ROLES.includes(actor.role)) {
+      throw AppError.forbidden('You do not have permission to issue invoices');
+    }
+
     const invoice = await prisma.invoice.findFirst({
       where: { id, deletedAt: null },
       include: { project: true, organization: true },
     });
     if (!invoice) throw AppError.notFound('Invoice not found');
+
+    await requireProjectAccess(actor, invoice.projectId);
 
     if (invoice.status !== InvoiceStatus.DRAFT) {
       throw AppError.badRequest(`Cannot issue invoice in status: ${invoice.status}`);
@@ -106,7 +122,7 @@ export class InvoiceService {
     });
 
     await auditService.log({
-      actorId,
+      actorId: actor.id,
       action: 'INVOICE_ISSUED',
       entityType: 'Invoice',
       entityId: invoice.id,
@@ -115,7 +131,7 @@ export class InvoiceService {
 
     await activityService.log({
       projectId: invoice.projectId,
-      actorId,
+      actorId: actor.id,
       type: 'INVOICE_ISSUED',
       message: `Invoice ${invoice.invoiceNumber} ($${invoice.total}) issued to ${invoice.organization.name}`,
       visibility: CommentVisibility.CLIENT_VISIBLE,
@@ -140,7 +156,7 @@ export class InvoiceService {
         message: `Invoice ${invoice.invoiceNumber} for $${invoice.total} has been issued. Due on ${invoice.dueDate.toISOString().split('T')[0]}.`,
         entityType: 'Invoice',
         entityId: invoice.id,
-        linkUrl: `/portal/invoices/${invoice.id}`,
+        linkUrl: `/portal/invoices`,
       });
     }
 
@@ -149,19 +165,59 @@ export class InvoiceService {
 
   /**
    * Records a payment against an invoice and recalculates invoice status.
+   * Rejects payments that would overpay the outstanding balance.
    */
-  async recordPayment(input: RecordPaymentInput, recordedById: string) {
+  async recordPayment(input: RecordPaymentInput, actor: AuthenticatedUser) {
+    if (!BILLING_ROLES.includes(actor.role)) {
+      throw AppError.forbidden('You do not have permission to record payments');
+    }
+
     const invoice = await prisma.invoice.findFirst({
       where: { id: input.invoiceId, deletedAt: null },
       include: { payments: true, project: true },
     });
     if (!invoice) throw AppError.notFound('Invoice not found');
 
+    await requireProjectAccess(actor, invoice.projectId);
+
     if (invoice.status === InvoiceStatus.DRAFT || invoice.status === InvoiceStatus.VOID) {
       throw AppError.badRequest(`Cannot record payment on an invoice in ${invoice.status} status`);
     }
 
+    const totalPaidSoFar = invoice.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+    const invoiceTotal = Number(invoice.total);
+    const outstanding = Number((invoiceTotal - totalPaidSoFar).toFixed(2));
+
+    if (input.amount > outstanding + 0.005) {
+      throw AppError.badRequest(
+        `Payment exceeds the outstanding balance of ${outstanding.toFixed(2)} (${invoice.currency})`
+      );
+    }
+
     const result = await prisma.$transaction(async (tx) => {
+      // Serialize concurrent payments: lock the invoice row for update so two
+      // simultaneous payments cannot both pass the outstanding-balance check.
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${input.invoiceId} FOR UPDATE`;
+
+      const lockedInvoice = await tx.invoice.findFirst({
+        where: { id: input.invoiceId, deletedAt: null },
+        include: { payments: true },
+      });
+      if (!lockedInvoice) throw AppError.notFound('Invoice not found');
+      if (lockedInvoice.status === InvoiceStatus.DRAFT || lockedInvoice.status === InvoiceStatus.VOID) {
+        throw AppError.badRequest(`Cannot record payment on an invoice in ${lockedInvoice.status} status`);
+      }
+
+      const lockedTotal = Number(lockedInvoice.total);
+      const paidSoFar = lockedInvoice.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+      const lockedOutstanding = Number((lockedTotal - paidSoFar).toFixed(2));
+
+      if (input.amount > lockedOutstanding + 0.005) {
+        throw AppError.badRequest(
+          `Payment exceeds the outstanding balance of ${lockedOutstanding.toFixed(2)} (${lockedInvoice.currency})`
+        );
+      }
+
       // 1. Create Payment record
       const payment = await tx.payment.create({
         data: {
@@ -170,24 +226,18 @@ export class InvoiceService {
           paymentDate: new Date(input.paymentDate),
           method: input.method || 'BANK_TRANSFER',
           reference: input.reference || null,
-          recordedById,
+          recordedById: actor.id,
           notes: input.notes || null,
         },
       });
 
-      // 2. Sum all payments including new one
-      const allPayments = await tx.payment.findMany({
-        where: { invoiceId: input.invoiceId },
-      });
-      const totalPaid = allPayments.reduce((sum, p) => sum + Number(p.amount), 0);
-      const invoiceTotal = Number(invoice.total);
-
-      // 3. Compute new status
-      let newStatus = invoice.status;
-      if (totalPaid >= invoiceTotal) {
-        newStatus = 'PAID';
+      // 2. Compute new status
+      const totalPaid = paidSoFar + input.amount;
+      let newStatus = lockedInvoice.status;
+      if (totalPaid >= lockedTotal) {
+        newStatus = InvoiceStatus.PAID;
       } else if (totalPaid > 0) {
-        newStatus = 'PARTIALLY_PAID';
+        newStatus = InvoiceStatus.PARTIALLY_PAID;
       }
 
       const updatedInvoice = await tx.invoice.update({
@@ -196,11 +246,11 @@ export class InvoiceService {
         include: { payments: true, items: true },
       });
 
-      return { payment, invoice: updatedInvoice, totalPaid, remaining: Math.max(0, invoiceTotal - totalPaid) };
+      return { payment, invoice: updatedInvoice, totalPaid, remaining: Math.max(0, lockedTotal - totalPaid) };
     });
 
     await auditService.log({
-      actorId: recordedById,
+      actorId: actor.id,
       action: 'PAYMENT_RECORDED',
       entityType: 'Payment',
       entityId: result.payment.id,
@@ -214,7 +264,7 @@ export class InvoiceService {
     if (result.invoice.status === InvoiceStatus.PAID) {
       await activityService.log({
         projectId: invoice.projectId,
-        actorId: recordedById,
+        actorId: actor.id,
         type: 'INVOICE_PAID',
         message: `Invoice ${invoice.invoiceNumber} paid in full ($${invoice.total})`,
         visibility: CommentVisibility.CLIENT_VISIBLE,
@@ -239,8 +289,9 @@ export class InvoiceService {
 
   /**
    * Retrieves an invoice by ID with strict tenant isolation.
+   * PMs may only access invoices for projects they are assigned to.
    */
-  async getInvoiceById(id: string, userRole: UserRole, userOrgId?: string | null) {
+  async getInvoiceById(id: string, actor: AuthenticatedUser) {
     const invoice = await prisma.invoice.findFirst({
       where: { id, deletedAt: null },
       include: {
@@ -257,14 +308,17 @@ export class InvoiceService {
     if (!invoice) throw AppError.notFound('Invoice not found');
 
     // Tenant isolation: client can only see their org's invoices
-    if (userRole === UserRole.CLIENT && invoice.organizationId !== userOrgId) {
+    if (actor.role === UserRole.CLIENT && invoice.organizationId !== actor.organizationId) {
       throw AppError.notFound('Invoice not found');
     }
 
     // Role isolation: developers/QA cannot view invoices
-    if (userRole === UserRole.DEVELOPER || userRole === UserRole.QA) {
+    if (actor.role === UserRole.DEVELOPER || actor.role === UserRole.QA) {
       throw AppError.forbidden('You do not have permission to view billing invoices');
     }
+
+    // PMs (and any internal staff) must have project-level access.
+    await requireProjectAccess(actor, invoice.projectId);
 
     const totalPaid = invoice.payments.reduce((sum, p) => sum + Number(p.amount), 0);
     const balanceDue = Number(Math.max(0, Number(invoice.total) - totalPaid).toFixed(2));
@@ -273,11 +327,11 @@ export class InvoiceService {
   }
 
   /**
-   * Lists invoices with pagination and filters.
+   * Lists invoices with pagination and filters, scoped to accessible projects.
    */
-  async listInvoices(query: PaginationQueryInput, userRole: UserRole, userOrgId?: string | null) {
+  async listInvoices(query: PaginationQueryInput, actor: AuthenticatedUser) {
     // Developers & QA cannot access billing
-    if (userRole === UserRole.DEVELOPER || userRole === UserRole.QA) {
+    if (actor.role === UserRole.DEVELOPER || actor.role === UserRole.QA) {
       throw AppError.forbidden('You do not have permission to view invoices');
     }
 
@@ -287,14 +341,23 @@ export class InvoiceService {
 
     const where: any = { deletedAt: null };
 
-    // Tenant isolation: clients only see their own organization's invoices
-    if (userRole === UserRole.CLIENT) {
-      where.organizationId = userOrgId;
-      // Clients do not see internal DRAFT invoices
+    // Tenant isolation: clients only see their own organization's invoices (no drafts)
+    if (actor.role === UserRole.CLIENT) {
+      where.organizationId = actor.organizationId;
       where.status = { not: InvoiceStatus.DRAFT };
     } else {
+      // Internal staff (PM) must scope to their accessible project set.
+      const accessible = await getAccessibleProjectIds(actor);
       if (query.organizationId) where.organizationId = query.organizationId;
-      if (query.projectId) where.projectId = query.projectId;
+      if (query.projectId) {
+        if (accessible === null || accessible.includes(query.projectId)) {
+          where.projectId = query.projectId;
+        } else {
+          where.projectId = '__no_access__';
+        }
+      } else if (accessible !== null) {
+        where.projectId = { in: accessible };
+      }
     }
 
     if (query.status) where.status = query.status;
@@ -328,12 +391,14 @@ export class InvoiceService {
   }
 
   /**
-   * Computes project profitability:
+   * Computes project profitability (PM: assigned projects only; internal data).
    * Revenue = Sum of all PAID invoice totals
    * Cost = Sum of all time entry hours * default internal cost rate ($45/hr)
    * Profit = Revenue - Cost
    */
-  async computeProjectProfitability(projectId: string, hourlyCostRate: number = 45) {
+  async computeProjectProfitability(projectId: string, actor: AuthenticatedUser, hourlyCostRate: number = 45) {
+    await requireProjectAccess(actor, projectId);
+
     const [paidInvoices, timeEntries, project] = await Promise.all([
       prisma.invoice.findMany({
         where: { projectId, status: InvoiceStatus.PAID, deletedAt: null },

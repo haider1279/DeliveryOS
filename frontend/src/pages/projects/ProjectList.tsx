@@ -56,12 +56,7 @@ export const ProjectList: React.FC = () => {
         api.get<any>('/users').then((r: any) => r.users || r || []),
       ]);
       setOrgs(orgsData);
-      const eligiblePms = usersData.filter(
-        (u: any) =>
-          u.role === UserRole.PROJECT_MANAGER ||
-          u.role === UserRole.ADMIN ||
-          u.role === UserRole.SUPER_ADMIN
-      );
+      const eligiblePms = usersData.filter((u: any) => u.role === UserRole.PROJECT_MANAGER);
       setPms(eligiblePms);
       if (orgsData.length > 0) setOrgId(orgsData[0].id);
       if (eligiblePms.length > 0) setPmId(eligiblePms[0].id);
@@ -135,6 +130,7 @@ export const ProjectList: React.FC = () => {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
+          aria-label="Filter projects by status"
           className="w-full sm:w-48 px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs text-slate-700 focus:outline-none focus:border-brand-500"
         >
           <option value="">All Statuses</option>

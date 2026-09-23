@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import {
   FileText,
   Rocket,
@@ -16,9 +16,11 @@ import { PriorityBadge } from '../../components/ui/PriorityBadge';
 import { Modal } from '../../components/ui/Modal';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { useToast } from '../../context/ToastContext';
 
 export const ClientProjectDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const toast = useToast();
   const [project, setProject] = useState<any>(null);
   const [requirements, setRequirements] = useState<any[]>([]);
   const [releases, setReleases] = useState<any[]>([]);
@@ -71,9 +73,10 @@ export const ClientProjectDetail: React.FC = () => {
       setTitle('');
       setDescription('');
       setAcceptanceCriteria('');
+      toast.success('Requirement submitted to the project manager.');
       fetchProjectData();
     } catch (err: any) {
-      alert(err.message || 'Failed to submit requirement');
+      toast.error(err.message || 'Failed to submit requirement');
     }
   };
 
@@ -88,9 +91,10 @@ export const ClientProjectDetail: React.FC = () => {
       });
       setIsReviewOpen(false);
       setReviewComment('');
+      toast.success(reviewDecision === 'APPROVED' ? 'Milestone approved — great work!' : 'Revisions requested.');
       fetchProjectData();
     } catch (err: any) {
-      alert(err.message || 'Failed to submit review');
+      toast.error(err.message || 'Failed to submit review');
     }
   };
 
@@ -159,6 +163,15 @@ export const ClientProjectDetail: React.FC = () => {
                     >
                       Review & Approve Delivery
                     </button>
+                  )}
+
+                  {req.status === 'WAITING_FOR_APPROVAL' && (
+                    <Link
+                      to={`/portal/requirements/${req.id}`}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                    >
+                      <DollarSign className="h-3.5 w-3.5" /> Review Estimate
+                    </Link>
                   )}
                 </div>
 

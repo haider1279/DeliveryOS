@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckSquare, Clock, AlertTriangle, Bug, Plus, CheckCircle2 } from 'lucide-react';
+import { CheckSquare, Clock, AlertTriangle, Bug, Plus, CheckCircle2, MessageSquare, Send } from 'lucide-react';
 import { api } from '../../api/client';
 import { MetricCard } from '../../components/ui/MetricCard';
 import { PriorityBadge } from '../../components/ui/PriorityBadge';
@@ -7,14 +7,27 @@ import { StatusBadge } from '../../components/ui/StatusBadge';
 import { Modal } from '../../components/ui/Modal';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { useToast } from '../../context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
+import { CommentVisibility } from '@deliveryos/shared';
 
 export const MyWork: React.FC = () => {
+  const toast = useToast();
+  const { user } = useAuth();
   const [data, setData] = useState<any>(null);
+  const [tasks, setTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [isTimeModalOpen, setIsTimeModalOpen] = useState(false);
   const [durationMinutes, setDurationMinutes] = useState('60');
   const [note, setNote] = useState('');
+
+  // Task comments modal
+  const [isCommentsOpen, setIsCommentsOpen] = useState(false);
+  const [commentsTask, setCommentsTask] = useState<any>(null);
+  const [taskDetail, setTaskDetail] = useState<any>(null);
+  const [taskDetailLoading, setTaskDetailLoading] = useState(false);
+  const [commentText, setCommentText] = useState('');
 
   const fetchMyWork = async () => {
     try {
@@ -27,16 +40,29 @@ export const MyWork: React.FC = () => {
     }
   };
 
+  const fetchTasks = async () => {
+    if (!user?.id) return;
+    try {
+      const res: any = await api.get('/tasks', { assigneeId: user.id });
+      setTasks(res?.tasks || res || []);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to load tasks');
+    }
+  };
+
   useEffect(() => {
     fetchMyWork();
-  }, []);
+    fetchTasks();
+  }, [user?.id]);
 
   const handleUpdateStatus = async (taskId: string, status: string) => {
     try {
       await api.patch(`/tasks/${taskId}`, { status });
+      toast.success(`Task moved to ${status.replace(/_/g, ' ')}`);
       fetchMyWork();
+      fetchTasks();
     } catch (err: any) {
-      alert(err.message || 'Failed to update task status');
+      toast.error(err.message || 'Failed to update task status');
     }
   };
 
@@ -53,15 +79,53 @@ export const MyWork: React.FC = () => {
       });
       setIsTimeModalOpen(false);
       setNote('');
+      toast.success('Time entry logged');
       fetchMyWork();
     } catch (err: any) {
-      alert(err.message || 'Failed to log time');
+      toast.error(err.message || 'Failed to log time');
+    }
+  };
+
+  const openTaskComments = async (task: any) => {
+    setIsCommentsOpen(true);
+    setCommentsTask(task);
+    setTaskDetail(task);
+    setCommentText('');
+    setTaskDetailLoading(true);
+    try {
+      const detail = await api.get<any>(`/tasks/${task.id}`);
+      setTaskDetail(detail);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to load task comments');
+    } finally {
+      setTaskDetailLoading(false);
+    }
+  };
+
+  const handleAddComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!commentsTask || !commentText.trim()) return;
+    try {
+      await api.post(`/tasks/${commentsTask.id}/comments`, {
+        content: commentText.trim(),
+        visibility: CommentVisibility.INTERNAL,
+      });
+      setCommentText('');
+      const detail = await api.get<any>(`/tasks/${commentsTask.id}`);
+      setTaskDetail(detail);
+      fetchTasks();
+      toast.success('Comment added');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to add comment');
     }
   };
 
   if (loading) return <LoadingSpinner size="lg" className="h-64" />;
 
-  const { activeTasks = [], assignedBugs = [], recentTimeEntries = [], summary = {} } = data || {};
+  const { assignedBugs = [], recentTimeEntries = [], summary = {} } = data || {};
+  const visibleTasks = tasks.filter(
+    (t: any) => t.status !== 'DONE' && t.status !== 'CANCELLED'
+  );
 
   return (
     <div className="space-y-8">
@@ -106,10 +170,10 @@ export const MyWork: React.FC = () => {
       {/* Active Tasks Table/Card List */}
       <div className="bg-white rounded-2xl border border-slate-200/80 p-6 space-y-4">
         <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-          Assigned Tasks Queue ({activeTasks.length})
+          Assigned Tasks Queue ({visibleTasks.length})
         </h3>
 
-        {activeTasks.length === 0 ? (
+        {visibleTasks.length === 0 ? (
           <EmptyState
             icon={CheckCircle2}
             title="All caught up!"
@@ -117,7 +181,7 @@ export const MyWork: React.FC = () => {
           />
         ) : (
           <div className="divide-y divide-slate-100">
-            {activeTasks.map((task: any) => (
+            {visibleTasks.map((task: any) => (
               <div key={task.id} className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <div className="flex items-center gap-2 mb-1">
@@ -139,6 +203,7 @@ export const MyWork: React.FC = () => {
                   <select
                     value={task.status}
                     onChange={(e) => handleUpdateStatus(task.id, e.target.value)}
+                    aria-label={`Status for task: ${task.title}`}
                     className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none"
                   >
                     <option value="TODO">TODO</option>
@@ -147,6 +212,14 @@ export const MyWork: React.FC = () => {
                     <option value="READY_FOR_QA">READY FOR QA</option>
                     <option value="DONE">DONE</option>
                   </select>
+
+                  <button
+                    onClick={() => openTaskComments(task)}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200 transition-colors"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    Comments ({task._count?.comments || 0})
+                  </button>
 
                   <button
                     onClick={() => {
@@ -233,6 +306,85 @@ export const MyWork: React.FC = () => {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Task Comments Modal */}
+      <Modal
+        isOpen={isCommentsOpen}
+        onClose={() => setIsCommentsOpen(false)}
+        title={`Comments: ${commentsTask?.title || ''}`}
+        maxWidth="xl"
+      >
+        {taskDetailLoading && !taskDetail?.comments ? (
+          <div className="py-10">
+            <LoadingSpinner size="lg" />
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              {taskDetail?.project?.code && (
+                <span className="text-[10px] font-mono font-bold bg-slate-100 px-2 py-0.5 rounded text-slate-600">
+                  {taskDetail.project.code}
+                </span>
+              )}
+              {taskDetail?.priority && <PriorityBadge priority={taskDetail.priority} />}
+              {taskDetail?.status && <StatusBadge status={taskDetail.status} />}
+            </div>
+
+            <div>
+              <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3">
+                Thread ({taskDetail?.comments?.length || 0})
+              </h4>
+              <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                {(taskDetail?.comments || []).length === 0 ? (
+                  <p className="text-xs text-slate-400">No comments yet. Add the first note below.</p>
+                ) : (
+                  taskDetail.comments.map((c: any) => (
+                    <div key={c.id} className="flex gap-2.5">
+                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold shrink-0">
+                        {c.author?.profile?.firstName?.[0] || 'U'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-slate-800">
+                            {c.author?.profile?.displayName || c.author?.profile?.firstName || c.author?.email}
+                          </span>
+                          <span
+                            className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide ${
+                              c.visibility === CommentVisibility.CLIENT_VISIBLE
+                                ? 'bg-emerald-50 text-emerald-700'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {c.visibility === CommentVisibility.CLIENT_VISIBLE ? 'Client' : 'Internal'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-600 mt-0.5 break-words">{c.content}</p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <form onSubmit={handleAddComment} className="mt-4 flex items-start gap-2">
+                <textarea
+                  rows={2}
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  placeholder="Add an internal comment..."
+                  className="flex-1 px-3 py-2 rounded-lg border text-xs focus:outline-none focus:border-brand-500"
+                />
+                <button
+                  type="submit"
+                  disabled={!commentText.trim()}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Send className="h-3.5 w-3.5" /> Add
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

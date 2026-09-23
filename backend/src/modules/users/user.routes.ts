@@ -5,6 +5,8 @@ import { validate } from '../../middleware/validate.middleware';
 import {
   InviteUserSchema,
   UpdateProfileSchema,
+  UpdateUserStatusSchema,
+  UpdateUserRoleSchema,
   PaginationQuerySchema,
   UserRole,
 } from '@deliveryos/shared';
@@ -43,7 +45,17 @@ router.patch(
   '/:id/status',
   authMiddleware,
   requireRole([UserRole.SUPER_ADMIN, UserRole.ADMIN]),
+  validate(UpdateUserStatusSchema),
   (req, res, next) => userController.updateStatus(req, res, next)
+);
+
+// Admin: update system role (SUPER_ADMIN/ADMIN only)
+router.patch(
+  '/:id/role',
+  authMiddleware,
+  requireRole([UserRole.SUPER_ADMIN, UserRole.ADMIN]),
+  validate(UpdateUserRoleSchema),
+  (req, res, next) => userController.updateRole(req, res, next)
 );
 
 export default router;

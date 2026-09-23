@@ -33,6 +33,46 @@ export function errorHandler(
     return;
   }
 
+  // Map Prisma unique constraint violations to a 409 Conflict instead of a
+  // generic 500 (project code, invoice number, email, etc.).
+  if (
+    err &&
+    typeof err === 'object' &&
+    (err as any).code === 'P2002'
+  ) {
+    const target: any = (err as any).meta?.target;
+    const field = Array.isArray(target)
+      ? target.join(', ')
+      : typeof target === 'string'
+        ? target
+        : 'unique field';
+    res.status(409).json({
+      success: false,
+      error: {
+        code: 'CONFLICT',
+        message: `A record with the same ${field} already exists`,
+      },
+    });
+    return;
+  }
+
+  // Map malformed id / uuid query values (e.g. a non-uuid in an :id param)
+  // to a 400 instead of leaking a 500.
+  if (
+    err &&
+    typeof err === 'object' &&
+    (err as any).code === 'P2023'
+  ) {
+    res.status(400).json({
+      success: false,
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'The requested resource identifier is invalid',
+      },
+    });
+    return;
+  }
+
   // Log unexpected errors server-side (structured)
   console.error('[ERROR]', {
     path: req.path,

@@ -6,15 +6,36 @@ import {
   UpdateOrganizationInput,
   PaginationQueryInput,
   UserRole,
+  OrganizationQualificationStatus,
+  AuthenticatedUser,
 } from '@deliveryos/shared';
+import { getAccessibleOrganizationIds } from '../../services/project-access.service';
 
 export class OrgService {
-  async createOrg(input: CreateOrganizationInput, actorId: string) {
+  async createOrg(input: CreateOrganizationInput, actor: AuthenticatedUser) {
     const existing = await prisma.organization.findUnique({
       where: { slug: input.slug.toLowerCase() },
     });
     if (existing) {
       throw AppError.conflict(`Organization slug "${input.slug}" is already taken`);
+    }
+
+    // Business-development owns client acquisition: a BD-created organization is
+    // a PROSPECT awaiting qualification. An ADMIN/SUPER_ADMIN creating an
+    // organization is directly onboarding a client, so it defaults to APPROVED
+    // (existing behaviour, unchanged for non-BD creators).
+    const isBd = actor.role === UserRole.BD;
+    const qualificationStatus =
+      input.qualificationStatus ??
+      (isBd ? OrganizationQualificationStatus.PROSPECT : OrganizationQualificationStatus.APPROVED);
+
+    // Only BD/ADMIN/SUPER_ADMIN may create organizations (enforced at the route
+    // level too); a non-admin creator can never self-approve a prospect.
+    if (
+      qualificationStatus === OrganizationQualificationStatus.APPROVED &&
+      isBd
+    ) {
+      throw AppError.forbidden('BD cannot self-approve a client; qualify it through the pipeline');
     }
 
     const org = await prisma.organization.create({
@@ -27,18 +48,66 @@ export class OrgService {
         city: input.city || null,
         country: input.country || null,
         notes: input.notes || null,
+        qualificationStatus,
       },
     });
 
     await auditService.log({
-      actorId,
+      actorId: actor.id,
       action: 'ORGANIZATION_CREATED',
       entityType: 'Organization',
       entityId: org.id,
-      metadata: { name: org.name, slug: org.slug },
+      metadata: { name: org.name, slug: org.slug, qualificationStatus },
     });
 
     return org;
+  }
+
+  /**
+   * BD client-acquisition qualification. Moves a prospect to APPROVED (handed
+   * off to ADMIN onboarding) or REJECTED. ADMIN/SUPER_ADMIN may also qualify so
+   * they can correct a bad decision, but the decision is always recorded against
+   * the authenticated actor — never a client-supplied id.
+   */
+  async qualifyOrg(
+    id: string,
+    decision: OrganizationQualificationStatus,
+    notes: string | undefined,
+    actor: AuthenticatedUser
+  ) {
+    const allowed = [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.BD];
+    if (!allowed.includes(actor.role as UserRole)) {
+      throw AppError.forbidden('Only BD or administrators can qualify a prospective client');
+    }
+
+    const org = await prisma.organization.findFirst({ where: { id, deletedAt: null } });
+    if (!org) throw AppError.notFound('Organization not found');
+
+    if (decision === org.qualificationStatus) {
+      throw AppError.badRequest(`Organization is already ${decision}`);
+    }
+
+    const updated = await prisma.organization.update({
+      where: { id },
+      data: {
+        qualificationStatus: decision,
+        qualificationNotes: notes ?? org.qualificationNotes,
+        qualifiedById: actor.id,
+        qualifiedAt: new Date(),
+      },
+    });
+
+    await auditService.log({
+      actorId: actor.id,
+      action: decision === OrganizationQualificationStatus.APPROVED
+        ? 'ORGANIZATION_QUALIFIED'
+        : 'ORGANIZATION_REJECTED',
+      entityType: 'Organization',
+      entityId: id,
+      metadata: { name: org.name, decision, notes: notes ?? null },
+    });
+
+    return updated;
   }
 
   async updateOrg(id: string, input: UpdateOrganizationInput, actorId: string) {
@@ -79,16 +148,38 @@ export class OrgService {
     return updated;
   }
 
-  async getOrgById(id: string, userRole: UserRole, userOrgId?: string | null) {
-    if (userRole === UserRole.CLIENT && id !== userOrgId) {
+  async getOrgById(id: string, actor: AuthenticatedUser) {
+    // Clients may only read their own organization.
+    if (actor.role === UserRole.CLIENT && id !== actor.organizationId) {
       throw AppError.notFound('Organization not found');
+    }
+
+    // DEVELOPER/QA have no organizational read access (agency details are
+    // internal). PROJECT_MANAGER may read organizations of their assigned
+    // projects only ("View Project Team"). BD and ADMIN/SUPER_ADMIN have full
+    // agency-wide organization visibility for the acquisition pipeline.
+    if (
+      actor.role === UserRole.DEVELOPER ||
+      actor.role === UserRole.QA ||
+      actor.role === UserRole.PROJECT_MANAGER
+    ) {
+      if (actor.role === UserRole.PROJECT_MANAGER) {
+        const accessibleOrgIds = await getAccessibleOrganizationIds(actor);
+        if (accessibleOrgIds && !accessibleOrgIds.includes(id)) {
+          throw AppError.notFound('Organization not found');
+        }
+      } else {
+        throw AppError.notFound('Organization not found');
+      }
     }
 
     const org = await prisma.organization.findFirst({
       where: { id, deletedAt: null },
       include: {
         projects: { where: { deletedAt: null }, select: { id: true, name: true, code: true, status: true } },
-        users: { select: { id: true, email: true, role: true, status: true, profile: true } },
+        ...(actor.role === UserRole.CLIENT
+          ? {}
+          : { users: { select: { id: true, email: true, role: true, status: true, profile: true } } }),
       },
     });
 
@@ -96,12 +187,28 @@ export class OrgService {
     return org;
   }
 
-  async listOrgs(query: PaginationQueryInput) {
+  async listOrgs(query: PaginationQueryInput, actor: AuthenticatedUser) {
     const page = query.page || 1;
     const pageSize = query.pageSize || 50;
     const skip = (page - 1) * pageSize;
 
     const where: any = { deletedAt: null };
+
+    // PROJECT_MANAGER gets a scoped view of the organizations covering their
+    // assigned projects (not every client the agency deals with).
+    if (
+      actor.role === UserRole.PROJECT_MANAGER ||
+      actor.role === UserRole.DEVELOPER ||
+      actor.role === UserRole.QA
+    ) {
+      const accessibleOrgIds = await getAccessibleOrganizationIds(actor);
+      if (accessibleOrgIds && accessibleOrgIds.length > 0) {
+        where.id = { in: accessibleOrgIds };
+      } else {
+        where.id = { in: [] };
+      }
+    }
+
     if (query.search) {
       where.OR = [
         { name: { contains: query.search, mode: 'insensitive' } },

@@ -5,7 +5,7 @@ import { sendSuccess, sendCreated, buildPaginationMeta } from '../../utils/respo
 export class TaskController {
   async create(req: Request, res: Response, next: NextFunction) {
     try {
-      const task = await taskService.createTask(req.body, req.user!.id);
+      const task = await taskService.createTask(req.user!, req.body);
       sendCreated(res, task, 'Task created successfully');
     } catch (err) {
       next(err);
@@ -15,12 +15,7 @@ export class TaskController {
   async update(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);
-      const task = await taskService.updateTask(
-        id,
-        req.body,
-        req.user!.id,
-        req.user!.role
-      );
+      const task = await taskService.updateTask(id, req.body, req.user!);
       sendSuccess(res, { data: task, message: 'Task updated successfully' });
     } catch (err) {
       next(err);
@@ -30,11 +25,7 @@ export class TaskController {
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);
-      const task = await taskService.getTaskById(
-        id,
-        req.user!.role,
-        req.user!.organizationId
-      );
+      const task = await taskService.getTaskById(req.user!, id);
       sendSuccess(res, { data: task });
     } catch (err) {
       next(err);
@@ -43,11 +34,7 @@ export class TaskController {
 
   async list(req: Request, res: Response, next: NextFunction) {
     try {
-      const result = await taskService.listTasks(
-        req.query as any,
-        req.user!.role,
-        req.user!.organizationId
-      );
+      const result = await taskService.listTasks(req.user!, req.query as any);
       sendSuccess(res, {
         data: result.tasks,
         meta: buildPaginationMeta(result.page, result.pageSize, result.total),
@@ -60,12 +47,7 @@ export class TaskController {
   async addComment(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);
-      const comment = await taskService.addComment(
-        id,
-        req.body,
-        req.user!.id,
-        req.user!.role
-      );
+      const comment = await taskService.addComment(req.user!, id, req.body);
       sendCreated(res, comment, 'Comment added successfully');
     } catch (err) {
       next(err);
@@ -74,12 +56,28 @@ export class TaskController {
 
   async logTime(req: Request, res: Response, next: NextFunction) {
     try {
-      const timeEntry = await taskService.logTime(
-        req.body,
-        req.user!.id,
-        req.user!.role
-      );
+      const timeEntry = await taskService.logTime(req.user!, req.body);
       sendCreated(res, timeEntry, 'Time logged successfully');
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  async updateTimeEntry(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = String(req.params.id);
+      const timeEntry = await taskService.updateTimeEntry(req.user!, id, req.body);
+      sendSuccess(res, { data: timeEntry, message: 'Time entry updated successfully' });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  async deleteTimeEntry(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = String(req.params.id);
+      const result = await taskService.deleteTimeEntry(req.user!, id);
+      sendSuccess(res, { data: result, message: 'Time entry deleted successfully' });
     } catch (err) {
       next(err);
     }

@@ -6,7 +6,10 @@ export class AuditController {
   async list(req: Request, res: Response, next: NextFunction) {
     try {
       const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
-      const pageSize = req.query.pageSize ? parseInt(req.query.pageSize as string, 10) : 50;
+      const pageSize = Math.min(
+        req.query.pageSize ? parseInt(req.query.pageSize as string, 10) : 50,
+        100
+      );
 
       const result = await auditService.query({
         entityType: req.query.entityType as string,

@@ -62,12 +62,30 @@ export function createApp(): Express {
   });
   app.use('/api', limiter);
 
+  // Stricter rate limit for credential-based endpoints (login + invite accept).
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20, // 20 login attempts per IP per 15 minutes
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    message: {
+      success: false,
+      error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many login attempts, please try again later' },
+    },
+  });
+  app.use('/api/auth/login', authLimiter);
+  app.use('/api/auth/accept-invite', authLimiter);
+
   // Healthcheck Endpoint
   app.get('/health', (_req: Request, res: Response) => {
     res.status(200).json({
       status: 'ok',
       service: 'deliveryos-backend',
-      environment: config.nodeEnv,
+      // Never disclose the runtime environment to public callers.
+      ...(config.nodeEnv === 'development'
+        ? { environment: config.nodeEnv }
+        : {}),
       timestamp: new Date().toISOString(),
     });
   });

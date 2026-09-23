@@ -45,7 +45,13 @@ export function requireProjectAccess(projectIdParam = 'projectId') {
         return;
       }
 
-      const projectIdRaw = req.params[projectIdParam] ?? req.body?.projectId ?? req.query?.projectId;
+      // Accept the project id from (in priority order): the named param, the
+      // conventional :id path param, the request body, or the querystring.
+      const projectIdRaw =
+        req.params[projectIdParam] ??
+        req.params['id'] ??
+        req.body?.projectId ??
+        req.query?.projectId;
       const projectId = typeof projectIdRaw === 'string' ? projectIdRaw : Array.isArray(projectIdRaw) ? (projectIdRaw[0] as string) : undefined;
       if (!projectId) {
         next();

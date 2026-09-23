@@ -2,6 +2,7 @@ import { prisma } from '../../config/prisma';
 import { AppError } from '../../errors/AppError';
 import { auditService } from '../../services/audit.service';
 import { notificationService, activityService } from '../../services/notification.service';
+import { requireProjectAccess, getAccessibleProjectIds } from '../../services/project-access.service';
 import {
   UserRole,
   ReleaseStatus,
@@ -9,22 +10,59 @@ import {
   RequirementStatus,
   CommentVisibility,
   NotificationType,
+  AuthenticatedUser,
   CreateReleaseInput,
   UpdateReleaseStatusInput,
   DecideClientReviewInput,
   PaginationQueryInput,
 } from '@deliveryos/shared';
 
+// Releases progress through a lifecycle; moving backward only happens for
+// rollbacks/re-plans.
+const RELEASE_TRANSITIONS: Record<ReleaseStatus, readonly ReleaseStatus[]> = {
+  [ReleaseStatus.PLANNED]: [ReleaseStatus.IN_PROGRESS, ReleaseStatus.DEPLOYED, ReleaseStatus.CANCELLED],
+  [ReleaseStatus.IN_PROGRESS]: [ReleaseStatus.READY, ReleaseStatus.DEPLOYED, ReleaseStatus.CANCELLED],
+  [ReleaseStatus.READY]: [ReleaseStatus.DEPLOYED, ReleaseStatus.CANCELLED],
+  [ReleaseStatus.DEPLOYED]: [ReleaseStatus.ROLLED_BACK],
+  [ReleaseStatus.ROLLED_BACK]: [ReleaseStatus.PLANNED, ReleaseStatus.IN_PROGRESS],
+  [ReleaseStatus.CANCELLED]: [ReleaseStatus.PLANNED],
+};
+
+// Clients may only view releases that have shipped (deployed or rolled back).
+const CLIENT_VISIBLE_RELEASE_STATUSES = [ReleaseStatus.DEPLOYED, ReleaseStatus.ROLLED_BACK];
+
 export class ReleaseService {
   /**
-   * Creates a new release with attached release items.
+   * Creates a new release with attached release items (PM/Admin only).
    */
-  async createRelease(input: CreateReleaseInput, creatorId: string) {
+  async createRelease(input: CreateReleaseInput, actor: AuthenticatedUser) {
+    await requireProjectAccess(actor, input.projectId);
+
     const project = await prisma.project.findFirst({
       where: { id: input.projectId, deletedAt: null },
     });
     if (!project) {
       throw AppError.notFound('Project not found');
+    }
+
+    // Every referenced requirement / bug must belong to this same project.
+    const requirementIds = input.itemIds.filter((i) => i.requirementId).map((i) => i.requirementId as string);
+    const bugIds = input.itemIds.filter((i) => i.bugId).map((i) => i.bugId as string);
+    if (requirementIds.length > 0) {
+      const count = await prisma.requirement.count({
+        where: { id: { in: requirementIds }, projectId: input.projectId, deletedAt: null },
+      });
+      if (count !== new Set(requirementIds).size) {
+        throw AppError.badRequest('One or more requirements do not belong to this project');
+      }
+    }
+    if (bugIds.length > 0) {
+      const count = await prisma.bug.count({
+        where: { id: { in: bugIds }, projectId: input.projectId },
+      });
+      if (count !== new Set(bugIds).size) {
+        throw AppError.badRequest('One or more bugs do not belong to this project');
+      }
     }
 
     // Check version uniqueness for this project
@@ -44,7 +82,7 @@ export class ReleaseService {
         releaseDate: input.releaseDate ? new Date(input.releaseDate) : null,
         releaseNotes: input.releaseNotes || null,
         deploymentNotes: input.deploymentNotes || null,
-        createdById: creatorId,
+        createdById: actor.id,
         items: {
           create: input.itemIds.map((item) => ({
             itemType: item.itemType,
@@ -66,7 +104,7 @@ export class ReleaseService {
     });
 
     await auditService.log({
-      actorId: creatorId,
+      actorId: actor.id,
       action: 'RELEASE_CREATED',
       entityType: 'Release',
       entityId: release.id,
@@ -75,7 +113,7 @@ export class ReleaseService {
 
     await activityService.log({
       projectId: release.projectId,
-      actorId: creatorId,
+      actorId: actor.id,
       type: 'RELEASE_CREATED',
       message: `Release ${release.version} planned: "${release.name}"`,
       visibility: CommentVisibility.CLIENT_VISIBLE,
@@ -87,9 +125,9 @@ export class ReleaseService {
   }
 
   /**
-   * Updates release status (e.g. DEPLOYED, ROLLED_BACK).
+   * Updates release status (e.g. DEPLOYED, ROLLED_BACK). PM/Admin only.
    */
-  async updateReleaseStatus(id: string, input: UpdateReleaseStatusInput, actorId: string) {
+  async updateReleaseStatus(id: string, input: UpdateReleaseStatusInput, actor: AuthenticatedUser) {
     const release = await prisma.release.findFirst({
       where: { id, deletedAt: null },
       include: { project: { include: { organization: true } } },
@@ -98,7 +136,19 @@ export class ReleaseService {
       throw AppError.notFound('Release not found');
     }
 
+    await requireProjectAccess(actor, release.projectId);
+
+    if (input.status === release.status) {
+      throw AppError.badRequest(`Release is already in ${input.status} status`);
+    }
+
+    const allowedNext = RELEASE_TRANSITIONS[release.status];
+    if (!allowedNext.includes(input.status)) {
+      throw AppError.forbidden(`Cannot move release from ${release.status} to ${input.status}`);
+    }
+
     const isNowDeployed = input.status === ReleaseStatus.DEPLOYED;
+    const isLeavingDeployed = release.status === ReleaseStatus.DEPLOYED;
 
     const updatedRelease = await prisma.release.update({
       where: { id },
@@ -106,6 +156,8 @@ export class ReleaseService {
         status: input.status,
         ...(input.deploymentNotes !== undefined && { deploymentNotes: input.deploymentNotes }),
         ...(isNowDeployed && { deployedAt: new Date() }),
+        // Rolled back releases are no longer "deployed".
+        ...(isLeavingDeployed && input.status !== ReleaseStatus.DEPLOYED && { deployedAt: null }),
       },
       include: {
         items: {
@@ -118,7 +170,7 @@ export class ReleaseService {
     });
 
     await auditService.log({
-      actorId,
+      actorId: actor.id,
       action: 'RELEASE_STATUS_UPDATED',
       entityType: 'Release',
       entityId: release.id,
@@ -127,7 +179,7 @@ export class ReleaseService {
 
     await activityService.log({
       projectId: release.projectId,
-      actorId,
+      actorId: actor.id,
       type: 'RELEASE_STATUS_CHANGED',
       message: `Release ${release.version} marked as ${input.status}`,
       visibility: CommentVisibility.CLIENT_VISIBLE,
@@ -162,9 +214,9 @@ export class ReleaseService {
   }
 
   /**
-   * Retrieves release by ID.
+   * Retrieves release by ID (project access enforced; clients see shipped only).
    */
-  async getReleaseById(id: string) {
+  async getReleaseById(id: string, actor: AuthenticatedUser) {
     const release = await prisma.release.findFirst({
       where: { id, deletedAt: null },
       include: {
@@ -180,20 +232,43 @@ export class ReleaseService {
     });
 
     if (!release) throw AppError.notFound('Release not found');
+
+    await requireProjectAccess(actor, release.projectId);
+
+    if (
+      actor.role === UserRole.CLIENT &&
+      !CLIENT_VISIBLE_RELEASE_STATUSES.includes(release.status as ReleaseStatus)
+    ) {
+      throw AppError.notFound('Release not found');
+    }
+
     return release;
   }
 
   /**
-   * Lists releases for a project.
+   * Lists releases scoped to accessible projects (clients: shipped only).
    */
-  async listReleases(query: PaginationQueryInput) {
+  async listReleases(query: PaginationQueryInput, actor: AuthenticatedUser) {
     const page = query.page || 1;
     const pageSize = query.pageSize || 25;
     const skip = (page - 1) * pageSize;
 
+    const accessible = await getAccessibleProjectIds(actor);
+
     const where: any = { deletedAt: null };
-    if (query.projectId) where.projectId = query.projectId;
+    if (query.projectId) {
+      if (accessible === null || accessible.includes(query.projectId)) {
+        where.projectId = query.projectId;
+      } else {
+        where.projectId = '__no_access__';
+      }
+    } else if (accessible !== null) {
+      where.projectId = { in: accessible };
+    }
     if (query.status) where.status = query.status;
+    if (actor.role === UserRole.CLIENT) {
+      where.status = { in: CLIENT_VISIBLE_RELEASE_STATUSES };
+    }
 
     const [releases, total] = await Promise.all([
       prisma.release.findMany({
@@ -214,6 +289,7 @@ export class ReleaseService {
 
   /**
    * Records a Client Review decision on a requirement in CLIENT_REVIEW status.
+   * Only the client (of the requirement's organization) may decide.
    */
   async recordClientReview(
     requirementId: string,
@@ -222,6 +298,11 @@ export class ReleaseService {
     reviewerRole: UserRole,
     reviewerOrgId?: string | null
   ) {
+    // Client Review Decisions are exclusively a CLIENT capability.
+    if (reviewerRole !== UserRole.CLIENT) {
+      throw AppError.forbidden('Only clients can record client review decisions');
+    }
+
     const requirement = await prisma.requirement.findFirst({
       where: { id: requirementId, deletedAt: null },
       include: { project: true },
@@ -237,8 +318,8 @@ export class ReleaseService {
       );
     }
 
-    // If client, verify tenant isolation
-    if (reviewerRole === UserRole.CLIENT && requirement.project.organizationId !== reviewerOrgId) {
+    // Tenant isolation (must be this client's own organization)
+    if (requirement.project.organizationId !== reviewerOrgId) {
       throw AppError.notFound('Requirement not found');
     }
 

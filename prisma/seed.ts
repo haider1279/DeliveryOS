@@ -71,7 +71,25 @@ async function main() {
     },
   });
 
+  // A PROSPECT organization created by BD — pending qualification
+  // (qualificationStatus defaults to APPROVED for existing orgs per the migration;
+  //  we explicitly set PROSPECT here to seed the BD pipeline demo)
+  const techNovaOrg = await prisma.organization.create({
+    data: {
+      name: 'TechNova Startup',
+      slug: 'technova-startup',
+      contactEmail: 'hello@technova.io',
+      contactPhone: '+1-555-0391',
+      city: 'Austin',
+      country: 'USA',
+      status: OrganizationStatus.ACTIVE,
+      qualificationStatus: 'PROSPECT',
+      notes: 'Fast-growing fintech startup — BD initial contact from LinkedIn outreach. Interested in mobile app + backend.',
+    },
+  });
+
   // 3. Seed Users across all roles with explicit passwordHash
+
   const defaultPasswordHash = bcrypt.hashSync('DeliveryOS123!', 10);
 
   const superAdmin = await prisma.user.create({
@@ -110,10 +128,30 @@ async function main() {
     },
   });
 
+  // BD (business-development) user — owns the client-acquisition pipeline
+  const bd = await prisma.user.create({
+    data: {
+      email: 'bd@deliveryos.local',
+      role: UserRole.BD,
+      status: UserStatus.ACTIVE,
+      passwordHash: defaultPasswordHash,
+      profile: {
+        create: {
+          firstName: 'Jordan',
+          lastName: 'Hayes',
+          displayName: 'Jordan Hayes',
+          jobTitle: 'Business Development Manager',
+          phone: '+1-555-1006',
+        },
+      },
+    },
+  });
+
   const pm = await prisma.user.create({
     data: {
       email: 'pm@deliveryos.local',
       role: UserRole.PROJECT_MANAGER,
+
       status: UserStatus.ACTIVE,
       passwordHash: defaultPasswordHash,
       profile: {
@@ -572,10 +610,11 @@ async function main() {
 
   console.log('Seeding completed successfully!');
   console.log('Seed summary:');
-  console.log(`- Organizations: 2 (${acmeOrg.name}, ${starlightOrg.name})`);
-  console.log(`- Users: 7 (SuperAdmin, Admin, PM, Dev, QA, Client Acme, Client Starlight)`);
+  console.log(`- Organizations: 3 (${acmeOrg.name}, ${starlightOrg.name}, ${techNovaOrg.name} [PROSPECT])`);
+  console.log(`- Users: 8 (SuperAdmin, Admin, BD (${bd.email}), PM, Dev, QA, Client Acme, Client Starlight)`);
   console.log(`- Projects: 2 (${acmeProject.name}, ${starlightProject.name})`);
   console.log(`- Invoices: 1 (Total: $13,000, Paid: $6,500 -> PARTIALLY_PAID)`);
+
 }
 
 main()

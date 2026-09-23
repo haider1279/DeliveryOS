@@ -19,6 +19,11 @@ import {
   AlertCircle,
   ShieldCheck,
   User,
+  History,
+  Paperclip,
+  Wallet,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import { api } from '../../api/client';
 import { StatusBadge } from '../../components/ui/StatusBadge';
@@ -28,13 +33,15 @@ import { Modal } from '../../components/ui/Modal';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useAuth } from '../../context/AuthContext';
-import { UserRole, RequirementStatus, TaskStatus, BugStatus, ReleaseStatus, CommentVisibility } from '@deliveryos/shared';
+import { useToast } from '../../context/ToastContext';
+import { UserRole, RequirementStatus, TaskStatus, BugStatus, ReleaseStatus, CommentVisibility, ReleaseItemType } from '@deliveryos/shared';
 
 export const ProjectWorkspace: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('tab') || 'overview';
   const { user } = useAuth();
+  const toast = useToast();
 
   const [project, setProject] = useState<any>(null);
   const [health, setHealth] = useState<any>(null);
@@ -75,15 +82,12 @@ export const ProjectWorkspace: React.FC = () => {
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDesc, setTaskDesc] = useState('');
   const [taskAssigneeId, setTaskAssigneeId] = useState('');
+  const [taskRequirementId, setTaskRequirementId] = useState('');
   const [taskEstimatedHours, setTaskEstimatedHours] = useState('8');
   const [taskPriority, setTaskPriority] = useState('MEDIUM');
 
   const [timeMinutes, setTimeMinutes] = useState('60');
   const [timeNote, setTimeNote] = useState('');
-
-  const [estDevHours, setEstDevHours] = useState('16');
-  const [estQaHours, setEstQaHours] = useState('8');
-  const [estClientPrice, setEstClientPrice] = useState('2400');
 
   const [bugTitle, setBugTitle] = useState('');
   const [bugDesc, setBugDesc] = useState('');
@@ -98,6 +102,35 @@ export const ProjectWorkspace: React.FC = () => {
   const [invNumber, setInvNumber] = useState(`INV-${Date.now().toString().slice(-6)}`);
   const [invAmount, setInvAmount] = useState('5000');
   const [payAmount, setPayAmount] = useState('2500');
+
+  // Estimate modal state
+  const [estimateReqId, setEstimateReqId] = useState<string | null>(null);
+  const [estDevHours, setEstDevHours] = useState('16');
+  const [estQaHours, setEstQaHours] = useState('8');
+  const [estDesignHours, setEstDesignHours] = useState('0');
+  const [estCost, setEstCost] = useState('0');
+  const [estClientPrice, setEstClientPrice] = useState('2400');
+  const [estAssumptions, setEstAssumptions] = useState('');
+  const [estExclusions, setEstExclusions] = useState('');
+  const [estNotes, setEstNotes] = useState('');
+  const [estDelivery, setEstDelivery] = useState('');
+
+  // Release modal state
+  const [relSelectedReqs, setRelSelectedReqs] = useState<string[]>([]);
+  const [relReleaseNotes, setRelReleaseNotes] = useState('');
+  const [relDeploymentNotes, setRelDeploymentNotes] = useState('');
+
+  // Invoice / payment modal state
+  const [invNotes, setInvNotes] = useState('');
+  const [invTax, setInvTax] = useState('0');
+  const [invDiscount, setInvDiscount] = useState('0');
+  const [payMethod, setPayMethod] = useState('BANK_TRANSFER');
+  const [payReference, setPayReference] = useState('');
+
+  // Expanded requirement detail (estimates + status history)
+  const [expandedReqId, setExpandedReqId] = useState<string | null>(null);
+  const [reqDetail, setReqDetail] = useState<any>(null);
+  const [reqDetailLoading, setReqDetailLoading] = useState(false);
 
   const fetchProjectData = async () => {
     try {
@@ -160,12 +193,51 @@ export const ProjectWorkspace: React.FC = () => {
     fetchTabData();
   }, [id, activeTab]);
 
+  // Auto-expand the requirement referenced by a notification link (?requirementId=...)
+  useEffect(() => {
+    const reqId = searchParams.get('requirementId');
+    if (!reqId) return;
+    if (expandedReqId === reqId) return;
+    const target = requirements.find((r) => r.id === reqId);
+    if (target) {
+      toggleReqDetail(reqId);
+      setSearchParams(
+        { tab: 'requirements' },
+        { replace: true }
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requirements, searchParams]);
+
+  // Scroll to the item referenced by a deep link (taskId / bugId / requirementId)
+  useEffect(() => {
+    const targetId =
+      searchParams.get('taskId') ||
+      searchParams.get('bugId') ||
+      searchParams.get('requirementId');
+    if (!targetId) return;
+    const id = (searchParams.get('taskId') && `task-${searchParams.get('taskId')}`) ||
+      (searchParams.get('bugId') && `bug-${searchParams.get('bugId')}`) ||
+      (searchParams.get('requirementId') && `req-${searchParams.get('requirementId')}`);
+    const el = id ? document.getElementById(id) : null;
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('ring-2', 'ring-brand-300');
+      setTimeout(() => el.classList.remove('ring-2', 'ring-brand-300'), 2000);
+    }
+  }, [searchParams, requirements, tasks, bugs, activeTab]);
+
   const canManage =
     user?.role === UserRole.SUPER_ADMIN ||
     user?.role === UserRole.ADMIN ||
     user?.role === UserRole.PROJECT_MANAGER;
 
   const canViewFinance = canManage;
+
+  // QA cannot create/edit development tasks (backend enforces this too).
+  const canCreateTask =
+    canManage || user?.role === UserRole.DEVELOPER;
+  const canUpdateTask = canCreateTask;
 
   const handleCreateRequirement = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -181,9 +253,10 @@ export const ProjectWorkspace: React.FC = () => {
       setReqTitle('');
       setReqDesc('');
       setReqCriteria('');
+      toast.success('Requirement created');
       fetchTabData();
     } catch (err: any) {
-      alert(err.message || 'Failed to create requirement');
+      toast.error(err.message || 'Failed to create requirement');
     }
   };
 
@@ -192,7 +265,7 @@ export const ProjectWorkspace: React.FC = () => {
     try {
       await api.post('/tasks', {
         projectId: id,
-        requirementId: selectedReq?.id || undefined,
+        requirementId: selectedReq?.id || taskRequirementId || undefined,
         title: taskTitle,
         description: taskDesc,
         assigneeId: taskAssigneeId || undefined,
@@ -202,9 +275,12 @@ export const ProjectWorkspace: React.FC = () => {
       setIsTaskModalOpen(false);
       setTaskTitle('');
       setTaskDesc('');
+      setTaskAssigneeId('');
+      setTaskRequirementId('');
+      toast.success('Task created');
       fetchTabData();
     } catch (err: any) {
-      alert(err.message || 'Failed to create task');
+      toast.error(err.message || 'Failed to create task');
     }
   };
 
@@ -221,10 +297,11 @@ export const ProjectWorkspace: React.FC = () => {
       });
       setIsTimeModalOpen(false);
       setTimeNote('');
+      toast.success('Time logged');
       fetchTabData();
       fetchProjectData();
     } catch (err: any) {
-      alert(err.message || 'Failed to log time');
+      toast.error(err.message || 'Failed to log time');
     }
   };
 
@@ -246,31 +323,291 @@ export const ProjectWorkspace: React.FC = () => {
       setBugSteps('');
       setBugExpected('');
       setBugActual('');
+      toast.success('Bug reported');
       fetchTabData();
     } catch (err: any) {
-      alert(err.message || 'Failed to report bug');
+      toast.error(err.message || 'Failed to report bug');
     }
   };
 
   const handleUpdateTaskStatus = async (taskId: string, newStatus: string) => {
     try {
       await api.patch(`/tasks/${taskId}`, { status: newStatus });
+      toast.success(`Task moved to ${newStatus}`);
       fetchTabData();
     } catch (err: any) {
-      alert(err.message || 'Failed to update task status');
+      toast.error(err.message || 'Failed to update task status');
     }
   };
 
   const handleUpdateBugStatus = async (bugId: string, newStatus: string) => {
     try {
       await api.patch(`/qa/bugs/${bugId}/status`, { status: newStatus });
+      toast.success(`Bug moved to ${newStatus}`);
       fetchTabData();
     } catch (err: any) {
-      alert(err.message || 'Failed to update bug status');
+      toast.error(err.message || 'Failed to update bug status');
+    }
+  };
+
+  // ---- Requirement workflow ----
+
+  const toggleReqDetail = async (reqId: string) => {
+    const next = expandedReqId === reqId ? null : reqId;
+    setExpandedReqId(next);
+    if (next) {
+      setReqDetailLoading(true);
+      try {
+        const detail: any = await api.get(`/requirements/${reqId}`);
+        setReqDetail(detail);
+      } catch (err: any) {
+        toast.error(err.message || 'Failed to load requirement detail');
+      } finally {
+        setReqDetailLoading(false);
+      }
+    } else {
+      setReqDetail(null);
+    }
+  };
+
+  const handleRequirementTransition = async (reqId: string, toStatus: string, comment?: string) => {
+    try {
+      await api.post(`/requirements/${reqId}/transition`, { toStatus, ...(comment ? { comment } : {}) });
+      toast.success(`Requirement moved to ${toStatus}`);
+      fetchTabData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update requirement status');
+    }
+  };
+
+  const openEstimateModal = (reqId: string) => {
+    setEstimateReqId(reqId);
+    setIsEstimateModalOpen(true);
+  };
+
+  const handleCreateEstimate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!estimateReqId) return;
+    try {
+      await api.post(`/requirements/${estimateReqId}/estimates`, {
+        devHours: parseFloat(estDevHours) || 0,
+        qaHours: parseFloat(estQaHours) || 0,
+        designHours: parseFloat(estDesignHours) || 0,
+        estimatedCost: parseFloat(estCost) || 0,
+        clientPrice: parseFloat(estClientPrice) || 0,
+        proposedDeliveryDate: estDelivery ? new Date(estDelivery).toISOString() : null,
+        assumptions: estAssumptions || undefined,
+        exclusions: estExclusions || undefined,
+        notes: estNotes || undefined,
+      });
+      setIsEstimateModalOpen(false);
+      setEstimateReqId(null);
+      setEstAssumptions('');
+      setEstExclusions('');
+      setEstNotes('');
+      setEstDelivery('');
+      toast.success('Estimate created. Send it once reviewed.');
+      fetchTabData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to create estimate');
+    }
+  };
+
+  const handleSendEstimate = async (reqId: string, estimateId: string) => {
+    try {
+      await api.post(`/requirements/${reqId}/estimates/${estimateId}/send`);
+      toast.success('Estimate sent to client for approval');
+      fetchTabData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to send estimate');
+    }
+  };
+
+  // ---- Releases ----
+
+  const openReleaseModal = (reqIds: string[]) => {
+    setRelSelectedReqs(reqIds || []);
+    setIsReleaseModalOpen(true);
+  };
+
+  const handleCreateRelease = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (relSelectedReqs.length === 0) {
+      toast.error('Select at least one requirement to include in this release');
+      return;
+    }
+    try {
+      await api.post('/releases', {
+        projectId: id,
+        version: relVersion,
+        name: relName,
+        releaseDate: new Date().toISOString(),
+        releaseNotes: relReleaseNotes || undefined,
+        deploymentNotes: relDeploymentNotes || undefined,
+        itemIds: relSelectedReqs.map((rid) => ({
+          itemType: ReleaseItemType.REQUIREMENT,
+          requirementId: rid,
+        })),
+      });
+      setIsReleaseModalOpen(false);
+      setRelVersion('1.0.0');
+      setRelName('MVP Launch');
+      setRelReleaseNotes('');
+      setRelDeploymentNotes('');
+      setRelSelectedReqs([]);
+      toast.success('Release planned');
+      fetchTabData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to plan release');
+    }
+  };
+
+  const handleReleaseStatus = async (releaseId: string, status: string) => {
+    try {
+      await api.patch(`/releases/${releaseId}/status`, { status });
+      toast.success(`Release marked ${status}`);
+      fetchTabData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update release');
+    }
+  };
+
+  // ---- Finance ----
+
+  const openInvoiceModal = () => {
+    setInvNumber(`INV-${Date.now().toString().slice(-6)}`);
+    setIsInvoiceModalOpen(true);
+  };
+
+  const handleCreateInvoice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const amount = parseFloat(invAmount) || 0;
+      await api.post('/invoices', {
+        organizationId: project.organizationId,
+        projectId: id,
+        invoiceNumber: invNumber,
+        issuedDate: new Date().toISOString(),
+        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        currency: 'USD',
+        discount: parseFloat(invDiscount) || 0,
+        tax: parseFloat(invTax) || 0,
+        notes: invNotes || undefined,
+        items: [{ description: `Project work: ${project.name}`, quantity: 1, unitPrice: amount }],
+      });
+      setIsInvoiceModalOpen(false);
+      setInvNotes('');
+      toast.success('Draft invoice created');
+      fetchTabData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to create invoice');
+    }
+  };
+
+  const handleIssueInvoice = async (invoiceId: string) => {
+    try {
+      await api.post(`/invoices/${invoiceId}/issue`);
+      toast.success('Invoice issued and client notified');
+      fetchTabData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to issue invoice');
+    }
+  };
+
+  const handleRecordPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedInvoice) return;
+    try {
+      await api.post(`/invoices/${selectedInvoice.id}/payments`, {
+        invoiceId: selectedInvoice.id,
+        amount: parseFloat(payAmount) || 0,
+        paymentDate: new Date().toISOString(),
+        method: payMethod,
+        reference: payReference || undefined,
+      });
+      setIsPaymentModalOpen(false);
+      setPayAmount('0');
+      setPayReference('');
+      toast.success('Payment recorded');
+      fetchTabData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to record payment');
     }
   };
 
   if (loading || !project) return <LoadingSpinner size="lg" className="h-64" />;
+
+  // Requirement workflow actions for the internal workspace (clients review in
+  // the portal). Mirrors the backend REQUIREMENT_TRANSITIONS map.
+  const getRequirementActions = (req: any) => {
+    const r = user?.role as UserRole;
+    const has = (...roles: UserRole[]) => roles.includes(r);
+    const canManage = [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(r);
+    const trans = (to: string) => ({
+      label: `→ ${to.replace(/_/g, ' ')}`,
+      onClick: () => handleRequirementTransition(req.id, to),
+    });
+
+    switch (req.status as RequirementStatus) {
+      case RequirementStatus.DRAFT:
+        if (has(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER))
+          return [{ label: 'Submit for Review', onClick: () => handleRequirementTransition(req.id, RequirementStatus.SUBMITTED) }];
+        return [];
+      case RequirementStatus.SUBMITTED:
+        if (canManage)
+          return [
+            trans(RequirementStatus.UNDER_REVIEW),
+            { label: 'Ask Clarification', onClick: () => handleRequirementTransition(req.id, RequirementStatus.NEEDS_CLARIFICATION) },
+            { label: 'Cancel', onClick: () => handleRequirementTransition(req.id, RequirementStatus.CANCELLED) },
+          ];
+        return [];
+      case RequirementStatus.UNDER_REVIEW:
+        if (canManage)
+          return [
+            trans(RequirementStatus.ESTIMATING),
+            { label: 'Ask Clarification', onClick: () => handleRequirementTransition(req.id, RequirementStatus.NEEDS_CLARIFICATION) },
+            { label: 'Cancel', onClick: () => handleRequirementTransition(req.id, RequirementStatus.CANCELLED) },
+          ];
+        return [];
+      case RequirementStatus.NEEDS_CLARIFICATION:
+        if (canManage)
+          return [
+            trans(RequirementStatus.UNDER_REVIEW),
+            { label: 'Cancel', onClick: () => handleRequirementTransition(req.id, RequirementStatus.CANCELLED) },
+          ];
+        return [];
+      case RequirementStatus.ESTIMATING:
+        if (canManage) return [{ label: 'Create Estimate', onClick: () => openEstimateModal(req.id) }];
+        return [];
+      case RequirementStatus.WAITING_FOR_APPROVAL:
+        if (canManage)
+          return [
+            { label: 'Ask Clarification', onClick: () => handleRequirementTransition(req.id, RequirementStatus.NEEDS_CLARIFICATION) },
+            { label: 'Cancel', onClick: () => handleRequirementTransition(req.id, RequirementStatus.CANCELLED) },
+          ];
+        return [];
+      case RequirementStatus.APPROVED:
+        if (canManage) return [trans(RequirementStatus.IN_DEVELOPMENT)];
+        return [];
+      case RequirementStatus.IN_DEVELOPMENT:
+        if (has(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.DEVELOPER, UserRole.QA))
+          return [trans(RequirementStatus.QA)];
+        return [];
+      case RequirementStatus.QA:
+        if (has(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.QA))
+          return [trans(RequirementStatus.CLIENT_REVIEW)];
+        return [];
+      case RequirementStatus.CLIENT_REVIEW:
+        if (canManage)
+          return [{ label: 'Send Back for Revisions', onClick: () => handleRequirementTransition(req.id, RequirementStatus.IN_DEVELOPMENT) }];
+        return [];
+      case RequirementStatus.REJECTED:
+        if (canManage) return [trans(RequirementStatus.SUBMITTED)];
+        return [];
+      default:
+        return [];
+    }
+  };
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: FolderKanban },
@@ -450,32 +787,139 @@ export const ProjectWorkspace: React.FC = () => {
             />
           ) : (
             <div className="grid grid-cols-1 gap-4">
-              {requirements.map((req) => (
-                <div
-                  key={req.id}
-                  className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-3"
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-[11px] font-mono font-bold text-slate-500">
-                          v{req.currentVersion}
-                        </span>
-                        <StatusBadge status={req.status} />
-                        <PriorityBadge priority={req.priority} />
+              {requirements.map((req) => {
+                const actions = getRequirementActions(req);
+                const isExpanded = expandedReqId === req.id;
+                return (
+                  <div
+                    key={req.id}
+                    id={`req-${req.id}`}
+                    className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <span className="text-[11px] font-mono font-bold text-slate-500">
+                            v{req.currentVersion}
+                          </span>
+                          <StatusBadge status={req.status} />
+                          <PriorityBadge priority={req.priority} />
+                        </div>
+                        <h4 className="text-base font-bold text-slate-900">{req.title}</h4>
                       </div>
-                      <h4 className="text-base font-bold text-slate-900">{req.title}</h4>
+                      <button
+                        onClick={() => toggleReqDetail(req.id)}
+                        className="text-xs font-semibold text-brand-600 hover:text-brand-700 flex items-center gap-1"
+                      >
+                        {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        {isExpanded ? 'Hide detail' : 'Estimate & history'}
+                      </button>
                     </div>
+                    <p className="text-xs text-slate-600">{req.description}</p>
+                    <div className="p-3 bg-slate-50 rounded-xl text-xs text-slate-700 border border-slate-100">
+                      <strong className="block text-[10px] uppercase font-bold text-slate-400 mb-1">
+                        Acceptance Criteria
+                      </strong>
+                      {req.acceptanceCriteria}
+                    </div>
+
+                    {/* Workflow actions */}
+                    {actions.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        {actions.map((a) => (
+                          <button
+                            key={a.label}
+                            onClick={a.onClick}
+                            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                          >
+                            {a.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {req.status === RequirementStatus.WAITING_FOR_APPROVAL && (
+                      <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                        Waiting for the client to approve the estimate in the portal.
+                      </p>
+                    )}
+
+                    {/* Expandable detail: estimates + history */}
+                    {isExpanded && (
+                      <div className="border-t border-slate-100 pt-3 space-y-4">
+                        {reqDetailLoading ? (
+                          <LoadingSpinner size="sm" className="py-4" />
+                        ) : reqDetail?.id === req.id ? (
+                          <>
+                            {reqDetail.estimates?.length ? (
+                              <div>
+                                <h5 className="text-[10px] uppercase font-bold text-slate-400 mb-2">
+                                  Estimates ({reqDetail.estimates.length})
+                                </h5>
+                                <div className="space-y-2">
+                                  {reqDetail.estimates.map((est: any) => (
+                                    <div
+                                      key={est.id}
+                                      className="flex items-center justify-between text-xs bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 flex-wrap gap-2"
+                                    >
+                                      <div className="text-slate-700">
+                                        <span className="font-mono font-bold">E{est.version}</span>
+                                        <span className="mx-2">
+                                          {est.devHours}dev / {est.qaHours}qa
+                                        </span>
+                                        <span className="font-semibold text-slate-900">
+                                          ${Number(est.clientPrice).toLocaleString()}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <StatusBadge status={est.status} />
+                                        {est.status === 'DRAFT' && canManage && (
+                                          <button
+                                            onClick={() => handleSendEstimate(req.id, est.id)}
+                                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-emerald-600 text-white hover:bg-emerald-700"
+                                          >
+                                            <Send className="h-3 w-3" /> Send for Approval
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="text-xs text-slate-400">No estimates yet.</p>
+                            )}
+
+                            {reqDetail.statusHistory?.length ? (
+                              <div>
+                                <h5 className="text-[10px] uppercase font-bold text-slate-400 mb-2">
+                                  Status History
+                                </h5>
+                                <div className="space-y-2">
+                                  {reqDetail.statusHistory.map((h: any) => (
+                                    <div key={h.id} className="flex items-start gap-2 text-xs">
+                                      <History className="h-3.5 w-3.5 text-slate-300 mt-0.5" />
+                                      <div className="text-slate-600">
+                                        <span className="font-semibold text-slate-800">
+                                          {h.fromStatus} → {h.toStatus}
+                                        </span>
+                                        <span className="text-slate-400 ml-2">
+                                          {new Date(h.createdAt).toLocaleString()}
+                                        </span>
+                                        {h.comment && <div className="text-slate-500">{h.comment}</div>}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                          </>
+                        ) : null}
+                      </div>
+                    )}
                   </div>
-                  <p className="text-xs text-slate-600">{req.description}</p>
-                  <div className="p-3 bg-slate-50 rounded-xl text-xs text-slate-700 border border-slate-100">
-                    <strong className="block text-[10px] uppercase font-bold text-slate-400 mb-1">
-                      Acceptance Criteria
-                    </strong>
-                    {req.acceptanceCriteria}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -486,12 +930,14 @@ export const ProjectWorkspace: React.FC = () => {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-800">Development Tasks</h3>
-            <button
-              onClick={() => setIsTaskModalOpen(true)}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700"
-            >
-              <Plus className="h-3.5 w-3.5" /> Create Task
-            </button>
+            {canCreateTask && (
+              <button
+                onClick={() => setIsTaskModalOpen(true)}
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700"
+              >
+                <Plus className="h-3.5 w-3.5" /> Create Task
+              </button>
+            )}
           </div>
 
           {tasks.length === 0 ? (
@@ -499,29 +945,38 @@ export const ProjectWorkspace: React.FC = () => {
               icon={CheckSquare}
               title="No tasks created"
               description="Create development tasks linked to approved requirements."
-              action={{ label: 'Create Task', onClick: () => setIsTaskModalOpen(true) }}
+              {...(canCreateTask
+                ? { action: { label: 'Create Task', onClick: () => setIsTaskModalOpen(true) } }
+                : {})}
             />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {tasks.map((t) => (
                 <div
                   key={t.id}
+                  id={`task-${t.id}`}
                   className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between space-y-3"
                 >
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <PriorityBadge priority={t.priority} />
-                      <select
-                        value={t.status}
-                        onChange={(e) => handleUpdateTaskStatus(t.id, e.target.value)}
-                        className="text-[11px] font-semibold bg-slate-50 border border-slate-200 rounded px-2 py-0.5 focus:outline-none"
-                      >
-                        <option value="TODO">TODO</option>
-                        <option value="IN_PROGRESS">IN PROGRESS</option>
-                        <option value="BLOCKED">BLOCKED</option>
-                        <option value="READY_FOR_QA">READY FOR QA</option>
-                        <option value="DONE">DONE</option>
-                      </select>
+                      {canUpdateTask ? (
+                        <select
+                          value={t.status}
+                          onChange={(e) => handleUpdateTaskStatus(t.id, e.target.value)}
+                          aria-label={`Status for task: ${t.title}`}
+                          className="text-[11px] font-semibold bg-slate-50 border border-slate-200 rounded px-2 py-0.5 focus:outline-none"
+                        >
+                          <option value="TODO">TODO</option>
+                          <option value="IN_PROGRESS">IN PROGRESS</option>
+                          <option value="CODE_REVIEW">CODE REVIEW</option>
+                          <option value="BLOCKED">BLOCKED</option>
+                          <option value="READY_FOR_QA">READY FOR QA</option>
+                          <option value="DONE">DONE</option>
+                        </select>
+                      ) : (
+                        <StatusBadge status={t.status} />
+                      )}
                     </div>
                     <h4 className="text-sm font-bold text-slate-900">{t.title}</h4>
                     {t.description && (
@@ -575,6 +1030,7 @@ export const ProjectWorkspace: React.FC = () => {
               {bugs.map((bug) => (
                 <div
                   key={bug.id}
+                  id={`bug-${bug.id}`}
                   className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-3"
                 >
                   <div className="flex items-start justify-between">
@@ -588,6 +1044,7 @@ export const ProjectWorkspace: React.FC = () => {
                     <select
                       value={bug.status}
                       onChange={(e) => handleUpdateBugStatus(bug.id, e.target.value)}
+                      aria-label={`Status for bug: ${bug.title}`}
                       className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded px-2 py-1"
                     >
                       <option value="OPEN">OPEN</option>
@@ -595,6 +1052,8 @@ export const ProjectWorkspace: React.FC = () => {
                       <option value="IN_PROGRESS">IN PROGRESS</option>
                       <option value="FIXED">FIXED</option>
                       <option value="READY_FOR_RETEST">READY FOR RETEST</option>
+                      <option value="REOPENED">REOPENED</option>
+                      <option value="WONT_FIX">WON&apos;T FIX</option>
                       <option value="CLOSED">CLOSED</option>
                     </select>
                   </div>
@@ -613,7 +1072,189 @@ export const ProjectWorkspace: React.FC = () => {
         </div>
       )}
 
-      {/* 5. FINANCE & INVOICES TAB */}
+      {/* 5. RELEASES TAB */}
+      {activeTab === 'releases' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-800">Release Planning</h3>
+            {canManage && (
+              <button
+                onClick={() => openReleaseModal(requirements.filter((r) => r.status === 'COMPLETED' || r.status === 'CLIENT_REVIEW' || r.status === 'QA' || r.status === 'IN_DEVELOPMENT').map((r) => r.id))}
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700"
+              >
+                <Plus className="h-3.5 w-3.5" /> Plan Release
+              </button>
+            )}
+          </div>
+
+          {releases.length === 0 ? (
+            <EmptyState
+              icon={Rocket}
+              title="No releases planned"
+              description="Group completed work into versioned releases."
+            />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {releases.map((rel) => {
+                const actions: { label: string; status: string }[] = [];
+                if (canManage) {
+                  const nextBy: any = {
+                    [ReleaseStatus.PLANNED]: [
+                      { label: 'Start', status: ReleaseStatus.IN_PROGRESS },
+                      { label: 'Cancel', status: ReleaseStatus.CANCELLED },
+                    ],
+                    [ReleaseStatus.IN_PROGRESS]: [
+                      { label: 'Mark Ready', status: ReleaseStatus.READY },
+                      { label: 'Cancel', status: ReleaseStatus.CANCELLED },
+                    ],
+                    [ReleaseStatus.READY]: [
+                      { label: 'Deploy', status: ReleaseStatus.DEPLOYED },
+                      { label: 'Cancel', status: ReleaseStatus.CANCELLED },
+                    ],
+                    [ReleaseStatus.DEPLOYED]: [{ label: 'Roll Back', status: ReleaseStatus.ROLLED_BACK }],
+                    [ReleaseStatus.ROLLED_BACK]: [{ label: 'Re-plan', status: ReleaseStatus.PLANNED }],
+                    [ReleaseStatus.CANCELLED]: [{ label: 'Re-plan', status: ReleaseStatus.PLANNED }],
+                  };
+                  actions.push(...(nextBy[rel.status] || []));
+                }
+                return (
+                  <div
+                    key={rel.id}
+                    className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-3"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700">
+                            {rel.version}
+                          </span>
+                          <StatusBadge status={rel.status} />
+                        </div>
+                        <h4 className="text-base font-bold text-slate-900">{rel.name}</h4>
+                      </div>
+                    </div>
+                    {rel.releaseNotes && (
+                      <p className="text-xs text-slate-500">{rel.releaseNotes}</p>
+                    )}
+                    {rel.items?.length > 0 && (
+                      <div className="space-y-1">
+                        {rel.items.map((item: any) => (
+                          <div key={item.id} className="text-[11px] text-slate-600 flex items-center gap-2">
+                            <FileText className="h-3 w-3 text-slate-300" />
+                            <span>
+                              {item.requirement ? item.requirement.title
+                                : item.bug ? `[Bug] ${item.bug.title}`
+                                : item.description}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {actions.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        {actions.map((a) => (
+                          <button
+                            key={a.status}
+                            onClick={() => handleReleaseStatus(rel.id, a.status)}
+                            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                          >
+                            {a.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 6. FILES TAB */}
+      {activeTab === 'files' && (
+        <div className="space-y-4">
+          <h3 className="text-sm font-bold text-slate-800">Project Files</h3>
+          {files.length === 0 ? (
+            <EmptyState
+              icon={FileUp}
+              title="No files uploaded"
+              description="Documents, evidence, and attachments for this project appear here."
+            />
+          ) : (
+            <div className="bg-white rounded-2xl border border-slate-200/80 divide-y divide-slate-100">
+              {files.map((f) => (
+                <div key={f.id} className="px-5 py-4 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+                      <Paperclip className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-900 truncate">
+                        {f.originalFilename}
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        {f.mimeType} • {(f.sizeBytes / 1024).toFixed(1)} KB •{' '}
+                        {f.uploadedBy?.profile?.displayName || f.uploadedBy?.email || 'Unknown'}{' '}
+                        • {new Date(f.createdAt).toLocaleDateString()}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <StatusBadge status={f.visibility} />
+                    {f.downloadUrl ? (
+                      <a
+                        href={f.downloadUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs font-semibold text-brand-600 hover:text-brand-700"
+                      >
+                        Download
+                      </a>
+                    ) : (
+                      <span className="text-[11px] text-slate-400" title="Object storage is not configured in this environment">
+                        Download unavailable
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 7. ACTIVITY TIMELINE TAB */}
+      {activeTab === 'activity' && (
+        <div className="space-y-4">
+          <h3 className="text-sm font-bold text-slate-800">Activity Timeline</h3>
+          {activities.length === 0 ? (
+            <EmptyState
+              icon={Activity}
+              title="No activity yet"
+              description="Project activity — status changes, comments, and workflow events — appears here."
+            />
+          ) : (
+            <div className="bg-white rounded-2xl border border-slate-200/80 divide-y divide-slate-100">
+              {activities.map((a: any) => (
+                <div key={a.id} className="px-5 py-3.5 flex items-start gap-3">
+                  <Activity className="h-4 w-4 text-brand-500 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-slate-700">{a.message}</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      {a.actor?.profile?.displayName || a.actor?.email || 'System'} •{' '}
+                      {new Date(a.createdAt).toLocaleString()}
+                    </p>
+                  </div>
+                  <StatusBadge status={a.visibility} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 8. FINANCE & INVOICES TAB */}
       {activeTab === 'finance' && (
         <div className="space-y-6">
           {profitability && (
@@ -650,13 +1291,21 @@ export const ProjectWorkspace: React.FC = () => {
           )}
 
           <div className="bg-white p-6 rounded-2xl border border-slate-200/80">
-            <h3 className="text-sm font-bold text-slate-900 mb-4">Project Invoices</h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-slate-900">Project Invoices</h3>
+              <button
+                onClick={openInvoiceModal}
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700"
+              >
+                <Plus className="h-3.5 w-3.5" /> New Invoice
+              </button>
+            </div>
             {invoices.length === 0 ? (
               <p className="text-xs text-slate-400">No invoices issued for this project yet.</p>
             ) : (
               <div className="divide-y divide-slate-100">
                 {invoices.map((inv) => (
-                  <div key={inv.id} className="py-3 flex items-center justify-between text-xs">
+                  <div key={inv.id} className="py-3 flex items-center justify-between text-xs gap-3 flex-wrap">
                     <div>
                       <span className="font-mono font-bold text-slate-900">
                         {inv.invoiceNumber}
@@ -664,12 +1313,34 @@ export const ProjectWorkspace: React.FC = () => {
                       <span className="text-slate-400 ml-2">
                         Due: {new Date(inv.dueDate).toLocaleDateString()}
                       </span>
+                      <span className="text-slate-400 ml-2">
+                        Paid: ${Number(inv.totalPaid ?? 0).toLocaleString()}
+                      </span>
                     </div>
                     <div className="flex items-center gap-3">
                       <strong className="text-slate-900">
                         ${Number(inv.total).toLocaleString()}
                       </strong>
                       <StatusBadge status={inv.status} />
+                      {inv.status === 'DRAFT' ? (
+                        <button
+                          onClick={() => handleIssueInvoice(inv.id)}
+                          className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                        >
+                          Issue & Notify
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setSelectedInvoice(inv);
+                            setPayAmount('0');
+                            setIsPaymentModalOpen(true);
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                        >
+                          <Wallet className="h-3 w-3" /> Record Payment
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -751,6 +1422,51 @@ export const ProjectWorkspace: React.FC = () => {
               onChange={(e) => setTaskDesc(e.target.value)}
               className="mt-1 w-full px-3 py-2 rounded-lg border text-xs focus:outline-none focus:border-brand-500"
             />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">Assignee</label>
+              <select
+                value={taskAssigneeId}
+                onChange={(e) => setTaskAssigneeId(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-xs focus:outline-none"
+              >
+                <option value="">Unassigned</option>
+                {project.members?.filter((m: any) => !m.leftAt).map((m: any) => (
+                  <option key={m.id} value={m.user?.id}>
+                    {m.user?.profile?.displayName || m.user?.email}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">Priority</label>
+              <select
+                value={taskPriority}
+                onChange={(e) => setTaskPriority(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-xs focus:outline-none"
+              >
+                <option value="LOW">LOW</option>
+                <option value="MEDIUM">MEDIUM</option>
+                <option value="HIGH">HIGH</option>
+                <option value="URGENT">URGENT</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700">Linked Requirement</label>
+            <select
+              value={taskRequirementId}
+              onChange={(e) => setTaskRequirementId(e.target.value)}
+              className="mt-1 w-full px-3 py-2 rounded-lg border text-xs focus:outline-none"
+            >
+              <option value="">None</option>
+              {requirements.map((req) => (
+                <option key={req.id} value={req.id}>
+                  [v{req.currentVersion}] {req.title}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-700">Estimated Hours</label>
@@ -897,6 +1613,348 @@ export const ProjectWorkspace: React.FC = () => {
               className="px-3 py-1.5 rounded text-xs font-semibold bg-rose-600 text-white"
             >
               Submit Bug
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Estimate Modal */}
+      <Modal
+        isOpen={isEstimateModalOpen}
+        onClose={() => {
+          setIsEstimateModalOpen(false);
+          setEstimateReqId(null);
+        }}
+        title="Create Estimate"
+      >
+        <form onSubmit={handleCreateEstimate} className="space-y-3">
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">Dev Hours</label>
+              <input
+                type="number"
+                min="0"
+                value={estDevHours}
+                onChange={(e) => setEstDevHours(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">QA Hours</label>
+              <input
+                type="number"
+                min="0"
+                value={estQaHours}
+                onChange={(e) => setEstQaHours(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">Design Hours</label>
+              <input
+                type="number"
+                min="0"
+                value={estDesignHours}
+                onChange={(e) => setEstDesignHours(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">Client Price ($)</label>
+              <input
+                type="number"
+                min="0"
+                value={estClientPrice}
+                onChange={(e) => setEstClientPrice(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">Internal Cost ($)</label>
+              <input
+                type="number"
+                min="0"
+                value={estCost}
+                onChange={(e) => setEstCost(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700">Proposed Delivery Date</label>
+            <input
+              type="date"
+              value={estDelivery}
+              onChange={(e) => setEstDelivery(e.target.value)}
+              className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700">Assumptions</label>
+            <textarea
+              rows={2}
+              value={estAssumptions}
+              onChange={(e) => setEstAssumptions(e.target.value)}
+              className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700">Exclusions</label>
+            <textarea
+              rows={2}
+              value={estExclusions}
+              onChange={(e) => setEstExclusions(e.target.value)}
+              className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t">
+            <button
+              type="button"
+              onClick={() => {
+                setIsEstimateModalOpen(false);
+                setEstimateReqId(null);
+              }}
+              className="px-3 py-1.5 rounded text-xs text-slate-600 hover:bg-slate-100"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-3 py-1.5 rounded text-xs font-semibold bg-brand-600 text-white"
+            >
+              Save Estimate
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Release Modal */}
+      <Modal
+        isOpen={isReleaseModalOpen}
+        onClose={() => setIsReleaseModalOpen(false)}
+        title="Plan New Release"
+      >
+        <form onSubmit={handleCreateRelease} className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">Version</label>
+              <input
+                type="text"
+                placeholder="1.0.0"
+                value={relVersion}
+                onChange={(e) => setRelVersion(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">Name</label>
+              <input
+                type="text"
+                value={relName}
+                onChange={(e) => setRelName(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700">Items (select requirements to include)</label>
+            <div className="mt-1 max-h-40 overflow-y-auto border rounded-lg divide-y divide-slate-100">
+              {requirements.map((req) => {
+                const checked = relSelectedReqs.includes(req.id);
+                return (
+                  <label
+                    key={req.id}
+                    className={`flex items-start gap-2 px-3 py-2 cursor-pointer text-xs ${
+                      checked ? 'bg-indigo-50' : ''
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() =>
+                        setRelSelectedReqs((prev) =>
+                          checked ? prev.filter((x) => x !== req.id) : [...prev, req.id]
+                        )
+                      }
+                      className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span className="text-slate-700">
+                      <StatusBadge status={req.status} />{' '}
+                      <span className="font-semibold">[v{req.currentVersion}] {req.title}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700">Release Notes</label>
+            <textarea
+              rows={2}
+              value={relReleaseNotes}
+              onChange={(e) => setRelReleaseNotes(e.target.value)}
+              className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700">Deployment Notes</label>
+            <textarea
+              rows={2}
+              value={relDeploymentNotes}
+              onChange={(e) => setRelDeploymentNotes(e.target.value)}
+              className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t">
+            <button
+              type="button"
+              onClick={() => setIsReleaseModalOpen(false)}
+              className="px-3 py-1.5 rounded text-xs text-slate-600 hover:bg-slate-100"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-3 py-1.5 rounded text-xs font-semibold bg-brand-600 text-white"
+            >
+              Plan Release
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Invoice Modal */}
+      <Modal
+        isOpen={isInvoiceModalOpen}
+        onClose={() => setIsInvoiceModalOpen(false)}
+        title="Create Invoice"
+      >
+        <form onSubmit={handleCreateInvoice} className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">Invoice Number</label>
+              <input
+                type="text"
+                value={invNumber}
+                onChange={(e) => setInvNumber(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">Total Amount ($)</label>
+              <input
+                type="number"
+                min="0"
+                value={invAmount}
+                onChange={(e) => setInvAmount(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">Tax %</label>
+              <input
+                type="number"
+                min="0"
+                value={invTax}
+                onChange={(e) => setInvTax(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">Discount %</label>
+              <input
+                type="number"
+                min="0"
+                value={invDiscount}
+                onChange={(e) => setInvDiscount(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700">Notes</label>
+            <textarea
+              rows={2}
+              value={invNotes}
+              onChange={(e) => setInvNotes(e.target.value)}
+              className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t">
+            <button
+              type="button"
+              onClick={() => setIsInvoiceModalOpen(false)}
+              className="px-3 py-1.5 rounded text-xs text-slate-600 hover:bg-slate-100"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-3 py-1.5 rounded text-xs font-semibold bg-brand-600 text-white"
+            >
+              Create Draft
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Payment Modal */}
+      <Modal
+        isOpen={isPaymentModalOpen}
+        onClose={() => setIsPaymentModalOpen(false)}
+        title={`Record Payment: ${selectedInvoice?.invoiceNumber || ''}`}
+      >
+        <form onSubmit={handleRecordPayment} className="space-y-3">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700">Amount ($)</label>
+            <input
+              type="number"
+              min="0.01"
+              required
+              value={payAmount}
+              onChange={(e) => setPayAmount(e.target.value)}
+              className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700">Method</label>
+            <select
+              value={payMethod}
+              onChange={(e) => setPayMethod(e.target.value)}
+              className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+            >
+              <option value="BANK_TRANSFER">Bank Transfer</option>
+              <option value="CARD">Card</option>
+              <option value="CASH">Cash</option>
+              <option value="CHECK">Check</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700">Reference</label>
+            <input
+              type="text"
+              value={payReference}
+              onChange={(e) => setPayReference(e.target.value)}
+              className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t">
+            <button
+              type="button"
+              onClick={() => setIsPaymentModalOpen(false)}
+              className="px-3 py-1.5 rounded text-xs text-slate-600 hover:bg-slate-100"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold bg-brand-600 text-white"
+            >
+              <Wallet className="h-3.5 w-3.5" /> Record Payment
             </button>
           </div>
         </form>

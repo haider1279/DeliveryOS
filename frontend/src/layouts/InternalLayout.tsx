@@ -9,10 +9,13 @@ import {
   BarChart3,
   ShieldCheck,
   Users,
+  Briefcase,
   Bell,
   LogOut,
   ChevronDown,
   Sparkles,
+  Menu,
+  X,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { UserRole } from '@deliveryos/shared';
@@ -25,6 +28,7 @@ export const InternalLayout: React.FC = () => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState<number>(0);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const fetchNotifications = async () => {
     try {
@@ -53,13 +57,40 @@ export const InternalLayout: React.FC = () => {
     }
   };
 
+  const handleOpenNotification = async (n: any) => {
+    try {
+      if (!n.readAt) {
+        await api.patch(`/notifications/${n.id}/read`);
+        setUnreadCount((c) => Math.max(0, c - 1));
+        setNotifications((prev) =>
+          prev.map((x) => (x.id === n.id ? { ...x, readAt: new Date().toISOString() } : x))
+        );
+      }
+    } catch {
+      // ignore
+    }
+    if (n.linkUrl) navigate(n.linkUrl);
+    setShowNotifications(false);
+  };
+
   const isRole = (roles: UserRole[]) => user && roles.includes(user.role);
+
+  // BD role is focused on the client-acquisition pipeline — they don't
+  // participate in project execution, so we hide unrelated nav items.
+  const isBD = user?.role === UserRole.BD;
 
   const navItems = [
     { label: 'Dashboard', path: '/app/dashboard', icon: LayoutDashboard },
-    { label: 'Projects', path: '/app/projects', icon: FolderKanban },
-    { label: 'My Work', path: '/app/my-work', icon: CheckSquare },
-    { label: 'QA & Bugs', path: '/app/qa', icon: Bug },
+    // Project execution items — hidden from BD
+    ...(!isBD ? [
+      { label: 'Projects', path: '/app/projects', icon: FolderKanban },
+      { label: 'My Work', path: '/app/my-work', icon: CheckSquare },
+      { label: 'QA & Bugs', path: '/app/qa', icon: Bug },
+    ] : []),
+    // CRM / acquisition pipeline — visible to BD + ADMIN + SUPER_ADMIN
+    ...(isRole([UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.BD])
+      ? [{ label: 'Clients & Leads', path: '/app/leads', icon: Briefcase }]
+      : []),
     ...(isRole([UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER])
       ? [
           { label: 'Invoices & Billing', path: '/app/invoices', icon: Receipt },
@@ -76,8 +107,21 @@ export const InternalLayout: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-slate-50">
+      {/* Mobile overlay */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-slate-900/40 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className="w-64 flex-shrink-0 border-r border-slate-200 bg-white flex flex-col justify-between">
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 w-64 transform border-r border-slate-200 bg-white flex flex-col justify-between transition-transform duration-200 md:static md:translate-x-0 ${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
         <div>
           {/* Brand Logo */}
           <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-100">
@@ -101,6 +145,7 @@ export const InternalLayout: React.FC = () => {
                 <Link
                   key={item.path}
                   to={item.path}
+                  onClick={() => setSidebarOpen(false)}
                   className={`flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-all ${
                     isActive
                       ? 'bg-brand-50 text-brand-700 font-semibold shadow-xs'
@@ -152,8 +197,15 @@ export const InternalLayout: React.FC = () => {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top Header */}
-        <header className="h-16 flex-shrink-0 border-b border-slate-200 bg-white px-8 flex items-center justify-between">
+        <header className="h-16 flex-shrink-0 border-b border-slate-200 bg-white px-4 md:px-8 flex items-center justify-between">
           <div className="flex items-center gap-4">
+            <button
+              onClick={() => setSidebarOpen((o) => !o)}
+              aria-label="Toggle navigation menu"
+              className="md:hidden p-2 -ml-2 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors"
+            >
+              {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
             <h1 className="text-lg font-semibold text-slate-900">
               {navItems.find((i) => location.pathname.startsWith(i.path))?.label || 'DeliveryOS'}
             </h1>
@@ -164,6 +216,7 @@ export const InternalLayout: React.FC = () => {
             <div className="relative">
               <button
                 onClick={handleToggleNotifications}
+                aria-label="Toggle notifications"
                 className="relative p-2 rounded-xl text-slate-500 hover:bg-slate-100 transition-colors"
               >
                 <Bell className="h-5 w-5" />
@@ -176,7 +229,7 @@ export const InternalLayout: React.FC = () => {
 
               {/* Notification Dropdown */}
               {showNotifications && (
-                <div className="absolute right-0 mt-2 w-80 rounded-xl bg-white shadow-xl border border-slate-200 z-50 overflow-hidden">
+                <div className="absolute right-0 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-xl bg-white shadow-xl border border-slate-200 z-50 overflow-hidden">
                   <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50/50">
                     <span className="text-xs font-semibold text-slate-800">Notifications</span>
                     {unreadCount > 0 && (
@@ -197,7 +250,8 @@ export const InternalLayout: React.FC = () => {
                       notifications.map((n) => (
                         <div
                           key={n.id}
-                          className={`p-3 text-left transition-colors ${
+                          onClick={() => handleOpenNotification(n)}
+                          className={`p-3 text-left transition-colors cursor-pointer ${
                             !n.readAt ? 'bg-brand-50/30' : 'hover:bg-slate-50'
                           }`}
                         >
@@ -220,7 +274,7 @@ export const InternalLayout: React.FC = () => {
         </header>
 
         {/* Scrollable Viewport */}
-        <main className="flex-1 overflow-y-auto p-8 bg-slate-50">
+        <main className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-50">
           <Outlet />
         </main>
       </div>

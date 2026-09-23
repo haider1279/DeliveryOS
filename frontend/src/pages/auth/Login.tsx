@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { Sparkles, ArrowRight, Shield, UserCheck, Code, Bug, Building } from 'lucide-react';
 import { UserRole } from '@deliveryos/shared';
@@ -17,9 +17,8 @@ export const Login: React.FC = () => {
     setError(null);
     setLoading(true);
     try {
-      await login(email, password);
-      // Auth context will populate user, navigate based on role:
-      navigate('/app/dashboard');
+      const user = await login(email, password);
+      navigate(user.role === UserRole.CLIENT ? '/portal/projects' : '/app/dashboard');
     } catch (err: any) {
       setError(err.message || 'Login failed');
     } finally {
@@ -111,8 +110,11 @@ export const Login: React.FC = () => {
 
           <form className="space-y-4" onSubmit={handleSubmit}>
             <div>
-              <label className="block text-xs font-medium text-slate-200">Email address</label>
+              <label htmlFor="email" className="block text-xs font-medium text-slate-200">
+                Email address
+              </label>
               <input
+                id="email"
                 type="email"
                 required
                 value={email}
@@ -123,8 +125,11 @@ export const Login: React.FC = () => {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-200">Password</label>
+              <label htmlFor="password" className="block text-xs font-medium text-slate-200">
+                Password
+              </label>
               <input
+                id="password"
                 type="password"
                 required
                 value={password}
@@ -143,6 +148,12 @@ export const Login: React.FC = () => {
               <ArrowRight className="h-4 w-4" />
             </button>
           </form>
+
+          <p className="mt-4 text-center text-sm text-slate-400">
+            <Link to="/accept-invite" className="font-medium text-brand-300 hover:text-brand-200">
+              Have an invitation? Accept it here
+            </Link>
+          </p>
 
           {/* Quick Demo Personas */}
           <div className="mt-8 pt-6 border-t border-white/10">

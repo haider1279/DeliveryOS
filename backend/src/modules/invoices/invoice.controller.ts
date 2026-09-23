@@ -5,7 +5,7 @@ import { sendSuccess, sendCreated, buildPaginationMeta } from '../../utils/respo
 export class InvoiceController {
   async create(req: Request, res: Response, next: NextFunction) {
     try {
-      const invoice = await invoiceService.createInvoice(req.body, req.user!.id);
+      const invoice = await invoiceService.createInvoice(req.body, req.user!);
       sendCreated(res, invoice, 'Invoice created successfully');
     } catch (err) {
       next(err);
@@ -15,7 +15,7 @@ export class InvoiceController {
   async issue(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);
-      const invoice = await invoiceService.issueInvoice(id, req.user!.id);
+      const invoice = await invoiceService.issueInvoice(id, req.user!);
       sendSuccess(res, { data: invoice, message: 'Invoice issued successfully' });
     } catch (err) {
       next(err);
@@ -24,7 +24,7 @@ export class InvoiceController {
 
   async recordPayment(req: Request, res: Response, next: NextFunction) {
     try {
-      const result = await invoiceService.recordPayment(req.body, req.user!.id);
+      const result = await invoiceService.recordPayment(req.body, req.user!);
       sendCreated(res, result, 'Payment recorded successfully');
     } catch (err) {
       next(err);
@@ -34,11 +34,7 @@ export class InvoiceController {
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);
-      const invoice = await invoiceService.getInvoiceById(
-        id,
-        req.user!.role,
-        req.user!.organizationId
-      );
+      const invoice = await invoiceService.getInvoiceById(id, req.user!);
       sendSuccess(res, { data: invoice });
     } catch (err) {
       next(err);
@@ -47,11 +43,7 @@ export class InvoiceController {
 
   async list(req: Request, res: Response, next: NextFunction) {
     try {
-      const result = await invoiceService.listInvoices(
-        req.query as any,
-        req.user!.role,
-        req.user!.organizationId
-      );
+      const result = await invoiceService.listInvoices(req.query as any, req.user!);
       sendSuccess(res, {
         data: result.invoices,
         meta: buildPaginationMeta(result.page, result.pageSize, result.total),
@@ -64,7 +56,7 @@ export class InvoiceController {
   async getProfitability(req: Request, res: Response, next: NextFunction) {
     try {
       const projectId = String(req.params.projectId);
-      const result = await invoiceService.computeProjectProfitability(projectId);
+      const result = await invoiceService.computeProjectProfitability(projectId, req.user!);
       sendSuccess(res, { data: result });
     } catch (err) {
       next(err);

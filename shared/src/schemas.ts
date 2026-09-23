@@ -3,6 +3,7 @@ import {
   UserRole,
   UserStatus,
   OrganizationStatus,
+  OrganizationQualificationStatus,
   ProjectStatus,
   ProjectPriority,
   ProjectMembershipRole,
@@ -46,9 +47,18 @@ export const InviteUserSchema = z.object({
 
 export const CompleteInviteSchema = z.object({
   email: z.string().email(),
+  token: z.string().min(16, 'The invite token is missing or invalid'),
   password: z.string().min(8),
   firstName: z.string().min(1).optional(),
   lastName: z.string().min(1).optional(),
+});
+
+export const UpdateUserStatusSchema = z.object({
+  status: z.nativeEnum(UserStatus),
+});
+
+export const UpdateUserRoleSchema = z.object({
+  role: z.nativeEnum(UserRole),
 });
 
 export const UpdateProfileSchema = z.object({
@@ -73,10 +83,26 @@ export const CreateOrganizationSchema = z.object({
   city: z.string().optional(),
   country: z.string().optional(),
   notes: z.string().optional(),
+  /**
+   * BD client-acquisition: creating an organization with PROSPECT records a
+   * lead awaiting qualification. ADMIN-created organizations default to
+   * APPROVED (direct onboarding) when omitted.
+   */
+  qualificationStatus: z.nativeEnum(OrganizationQualificationStatus).optional(),
 });
 
 export const UpdateOrganizationSchema = CreateOrganizationSchema.partial().extend({
   status: z.nativeEnum(OrganizationStatus).optional(),
+});
+
+// BD qualification decision: APPROVED hands the prospect off to ADMIN
+// onboarding; REJECTED declines it. PROSPECT is not a valid target here.
+export const QualifyOrganizationSchema = z.object({
+  decision: z.enum([
+    OrganizationQualificationStatus.APPROVED,
+    OrganizationQualificationStatus.REJECTED,
+  ]),
+  notes: z.string().optional(),
 });
 
 // -------------------------------------------------------------
@@ -97,7 +123,20 @@ export const CreateProjectSchema = z.object({
   notes: z.string().optional(),
 });
 
-export const UpdateProjectSchema = CreateProjectSchema.partial().extend({
+// Project updates must NOT allow re-homing the project to another organization
+// or silently swapping the project manager (both are ownership-level fields set
+// only at creation time by trusted staff).
+export const UpdateProjectSchema = z.object({
+  name: z.string().min(2).optional(),
+  code: z.string().min(2).max(10).regex(/^[A-Z0-9_-]+$/, 'Must be uppercase alphanumeric code').optional(),
+  description: z.string().optional(),
+  priority: z.nativeEnum(ProjectPriority).optional(),
+  startDate: z.string().datetime().optional().nullable(),
+  targetDate: z.string().datetime().optional().nullable(),
+  budget: z.number().nonnegative().optional().nullable(),
+  currency: z.string().optional(),
+  estimatedEffortHours: z.number().nonnegative().optional().nullable(),
+  notes: z.string().optional(),
   status: z.nativeEnum(ProjectStatus).optional(),
   actualEffortHours: z.number().nonnegative().optional(),
 });
@@ -170,10 +209,12 @@ export const CreateTaskSchema = z.object({
   labels: z.array(z.string()).default([]),
 });
 
-export const UpdateTaskSchema = CreateTaskSchema.partial().extend({
-  status: z.nativeEnum(TaskStatus).optional(),
-  actualHours: z.number().nonnegative().optional(),
-});
+export const UpdateTaskSchema = CreateTaskSchema.partial()
+  .omit({ projectId: true, requirementId: true })
+  .extend({
+    status: z.nativeEnum(TaskStatus).optional(),
+    actualHours: z.number().nonnegative().optional(),
+  });
 
 export const CreateTaskCommentSchema = z.object({
   content: z.string().min(1),
@@ -186,6 +227,13 @@ export const CreateTimeEntrySchema = z.object({
   durationMinutes: z.number().int().positive(),
   note: z.string().optional(),
   billable: z.boolean().default(true),
+});
+
+export const UpdateTimeEntrySchema = z.object({
+  date: z.string().datetime().optional(),
+  durationMinutes: z.number().int().positive().optional(),
+  note: z.string().nullable().optional(),
+  billable: z.boolean().optional(),
 });
 
 // -------------------------------------------------------------
@@ -291,6 +339,66 @@ export const RecordPaymentSchema = z.object({
   reference: z.string().optional(),
   notes: z.string().optional(),
 });
+
+// -------------------------------------------------------------
+// Storage / File Asset Schemas
+// -------------------------------------------------------------
+export const FileEntityTypeSchema = z.enum([
+  'DOCUMENT',
+  'REQUIREMENT',
+  'TASK',
+  'BUG',
+  'TEST_RUN',
+  'PROJECT',
+  'GENERAL',
+]);
+
+// Allowed MIME types for uploaded files (defense in depth: the object store
+// itself must also enforce this, but we reject junk at the API boundary).
+const ALLOWED_UPLOAD_MIME_TYPES = new Set([
+  'application/pdf',
+  'application/json',
+  'application/xml',
+  'text/plain',
+  'text/csv',
+  'text/markdown',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/zip',
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/svg+xml',
+]);
+
+export const RegisterFileSchema = z
+  .object({
+    organizationId: z.string().uuid(),
+    projectId: z.string().uuid(),
+    relatedEntityType: FileEntityTypeSchema,
+    relatedEntityId: z.string().uuid(),
+    storageKey: z.string().min(1).max(500),
+    originalFilename: z.string().min(1).max(255),
+    mimeType: z
+      .string()
+      .min(1)
+      .max(120)
+      .refine((m) => ALLOWED_UPLOAD_MIME_TYPES.has(m.toLowerCase()), {
+        message: 'This file type is not allowed',
+      }),
+    sizeBytes: z
+      .number()
+      .int()
+      .positive()
+      .max(25 * 1024 * 1024, 'Files must not exceed 25 MB'),
+    visibility: z.nativeEnum(FileVisibility).default(FileVisibility.INTERNAL),
+  })
+  .strict();
 
 // -------------------------------------------------------------
 // Pagination & Query Filter Schemas

@@ -5,7 +5,7 @@ import { sendSuccess, sendCreated, buildPaginationMeta } from '../../utils/respo
 export class QaController {
   async createTestCase(req: Request, res: Response, next: NextFunction) {
     try {
-      const testCase = await qaService.createTestCase(req.body, req.user!.id);
+      const testCase = await qaService.createTestCase(req.body, req.user!);
       sendCreated(res, testCase, 'Test case created successfully');
     } catch (err) {
       next(err);
@@ -14,7 +14,7 @@ export class QaController {
 
   async listTestCases(req: Request, res: Response, next: NextFunction) {
     try {
-      const result = await qaService.listTestCases(req.query as any);
+      const result = await qaService.listTestCases(req.query as any, req.user!);
       sendSuccess(res, {
         data: result.testCases,
         meta: buildPaginationMeta(result.page, result.pageSize, result.total),
@@ -26,7 +26,7 @@ export class QaController {
 
   async executeTestRun(req: Request, res: Response, next: NextFunction) {
     try {
-      const result = await qaService.executeTestRun(req.body, req.user!.id);
+      const result = await qaService.executeTestRun(req.body, req.user!);
       sendCreated(res, result, 'Test run executed successfully');
     } catch (err) {
       next(err);
@@ -35,7 +35,7 @@ export class QaController {
 
   async createBug(req: Request, res: Response, next: NextFunction) {
     try {
-      const bug = await qaService.createBug(req.body, req.user!.id);
+      const bug = await qaService.createBug(req.body, req.user!);
       sendCreated(res, bug, 'Bug created successfully');
     } catch (err) {
       next(err);
@@ -45,12 +45,7 @@ export class QaController {
   async updateBugStatus(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);
-      const bug = await qaService.updateBugStatus(
-        id,
-        req.body,
-        req.user!.id,
-        req.user!.role
-      );
+      const bug = await qaService.updateBugStatus(id, req.body, req.user!);
       sendSuccess(res, { data: bug, message: 'Bug status updated successfully' });
     } catch (err) {
       next(err);
@@ -60,11 +55,7 @@ export class QaController {
   async getBugById(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);
-      const bug = await qaService.getBugById(
-        id,
-        req.user!.role,
-        req.user!.organizationId
-      );
+      const bug = await qaService.getBugById(id, req.user!);
       sendSuccess(res, { data: bug });
     } catch (err) {
       next(err);
@@ -73,11 +64,7 @@ export class QaController {
 
   async listBugs(req: Request, res: Response, next: NextFunction) {
     try {
-      const result = await qaService.listBugs(
-        req.query as any,
-        req.user!.role,
-        req.user!.organizationId
-      );
+      const result = await qaService.listBugs(req.query as any, req.user!);
       sendSuccess(res, {
         data: result.bugs,
         meta: buildPaginationMeta(result.page, result.pageSize, result.total),
@@ -90,12 +77,7 @@ export class QaController {
   async addBugComment(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);
-      const comment = await qaService.addComment(
-        id,
-        req.body,
-        req.user!.id,
-        req.user!.role
-      );
+      const comment = await qaService.addComment(id, req.body, req.user!);
       sendCreated(res, comment, 'Comment added successfully');
     } catch (err) {
       next(err);

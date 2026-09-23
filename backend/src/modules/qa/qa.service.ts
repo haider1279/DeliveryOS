@@ -2,6 +2,7 @@ import { prisma } from '../../config/prisma';
 import { AppError } from '../../errors/AppError';
 import { auditService } from '../../services/audit.service';
 import { notificationService, activityService } from '../../services/notification.service';
+import { requireProjectAccess, getAccessibleProjectIds, assertProjectWritable } from '../../services/project-access.service';
 import {
   UserRole,
   BugStatus,
@@ -10,6 +11,7 @@ import {
   TestRunResult,
   CommentVisibility,
   NotificationType,
+  AuthenticatedUser,
   CreateTestCaseInput,
   ExecuteTestRunInput,
   CreateBugInput,
@@ -18,16 +20,61 @@ import {
   PaginationQueryInput,
 } from '@deliveryos/shared';
 
+// Valid lifecycle moves (closed bug states can only be reopened/opened later).
+const BUG_TRANSITIONS: Record<BugStatus, readonly BugStatus[]> = {
+  [BugStatus.OPEN]: [BugStatus.TRIAGED, BugStatus.IN_PROGRESS, BugStatus.REOPENED, BugStatus.WONT_FIX],
+  [BugStatus.TRIAGED]: [BugStatus.OPEN, BugStatus.IN_PROGRESS, BugStatus.REOPENED, BugStatus.WONT_FIX],
+  [BugStatus.IN_PROGRESS]: [BugStatus.READY_FOR_RETEST, BugStatus.FIXED, BugStatus.REOPENED],
+  [BugStatus.FIXED]: [BugStatus.READY_FOR_RETEST, BugStatus.CLOSED, BugStatus.REOPENED],
+  [BugStatus.READY_FOR_RETEST]: [BugStatus.CLOSED, BugStatus.FIXED, BugStatus.REOPENED],
+  [BugStatus.REOPENED]: [BugStatus.TRIAGED, BugStatus.IN_PROGRESS, BugStatus.WONT_FIX],
+  [BugStatus.CLOSED]: [BugStatus.REOPENED, BugStatus.OPEN],
+  [BugStatus.WONT_FIX]: [BugStatus.REOPENED, BugStatus.OPEN, BugStatus.CLOSED],
+};
+
+// Which roles may move a bug INTO each status. SUPER_ADMIN / ADMIN / PROJECT_MANAGER
+// may perform any legal transition.
+const BUG_STATUS_ENTRY_GATES: Record<BugStatus, readonly UserRole[]> = {
+  [BugStatus.OPEN]: [UserRole.QA, UserRole.DEVELOPER],
+  [BugStatus.TRIAGED]: [UserRole.QA],
+  [BugStatus.IN_PROGRESS]: [UserRole.QA, UserRole.DEVELOPER],
+  [BugStatus.FIXED]: [UserRole.DEVELOPER, UserRole.QA],
+  [BugStatus.READY_FOR_RETEST]: [UserRole.DEVELOPER, UserRole.QA],
+  [BugStatus.REOPENED]: [UserRole.QA, UserRole.DEVELOPER],
+  [BugStatus.CLOSED]: [UserRole.QA],
+  [BugStatus.WONT_FIX]: [UserRole.QA],
+};
+
+const STAFF_WITH_FULL_BUG_CONTROL = [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER];
+
 export class QaService {
   /**
-   * Creates a test case for a project/requirement.
+   * Creates a test case for a project/requirement (QA/PM/admin only).
    */
-  async createTestCase(input: CreateTestCaseInput, creatorId: string) {
+  async createTestCase(input: CreateTestCaseInput, actor: AuthenticatedUser) {
+    const allowedRoles = [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.QA];
+    if (!allowedRoles.includes(actor.role)) {
+      throw AppError.forbidden('Only QA and project managers can create test cases');
+    }
+
+    await assertProjectWritable(actor, input.projectId);
+
     const project = await prisma.project.findFirst({
       where: { id: input.projectId, deletedAt: null },
     });
     if (!project) {
       throw AppError.notFound('Project not found');
+    }
+
+    // Requirement must belong to the same project when provided.
+    if (input.requirementId) {
+      const requirement = await prisma.requirement.findFirst({
+        where: { id: input.requirementId, projectId: input.projectId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!requirement) {
+        throw AppError.badRequest('Requirement does not belong to this project');
+      }
     }
 
     const testCase = await prisma.testCase.create({
@@ -37,7 +84,7 @@ export class QaService {
         title: input.title,
         steps: input.steps,
         expectedResult: input.expectedResult,
-        createdById: creatorId,
+        createdById: actor.id,
       },
       include: {
         createdBy: { include: { profile: true } },
@@ -46,7 +93,7 @@ export class QaService {
     });
 
     await auditService.log({
-      actorId: creatorId,
+      actorId: actor.id,
       action: 'TEST_CASE_CREATED',
       entityType: 'TestCase',
       entityId: testCase.id,
@@ -57,15 +104,31 @@ export class QaService {
   }
 
   /**
-   * Lists test cases for a project.
+   * Lists test cases scoped to the actor's accessible projects.
    */
-  async listTestCases(query: PaginationQueryInput) {
+  async listTestCases(query: PaginationQueryInput, actor: AuthenticatedUser) {
+    // Per the roles-permissions matrix clients have no access to test cases.
+    if (actor.role === UserRole.CLIENT) {
+      throw AppError.forbidden('Clients do not have access to test cases');
+    }
+
     const page = query.page || 1;
     const pageSize = query.pageSize || 25;
     const skip = (page - 1) * pageSize;
 
+    const accessible = await getAccessibleProjectIds(actor);
+
     const where: any = {};
-    if (query.projectId) where.projectId = query.projectId;
+    if (query.projectId) {
+      if (accessible === null || accessible.includes(query.projectId)) {
+        where.projectId = query.projectId;
+      } else {
+        where.projectId = '__no_access__';
+      }
+    } else if (accessible !== null) {
+      where.projectId = { in: accessible };
+    }
+
     if (query.search) {
       where.OR = [
         { title: { contains: query.search, mode: 'insensitive' } },
@@ -92,17 +155,47 @@ export class QaService {
   }
 
   /**
-   * Executes a test run.
+   * Executes a test run (QA/PM/admin only, within an accessible project).
    * If the result is FAIL, an automated Bug is spawned inside a transaction
    * (unless an active open bug for this test case already exists).
    */
-  async executeTestRun(input: ExecuteTestRunInput, executedById: string) {
+  async executeTestRun(input: ExecuteTestRunInput, actor: AuthenticatedUser) {
+    const allowedRoles = [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.QA];
+    if (!allowedRoles.includes(actor.role)) {
+      throw AppError.forbidden('Only QA and project managers can execute test runs');
+    }
+
     const testCase = await prisma.testCase.findUnique({
       where: { id: input.testCaseId },
       include: { project: true },
     });
     if (!testCase) {
       throw AppError.notFound('Test case not found');
+    }
+
+    await requireProjectAccess(actor, testCase.projectId);
+
+    // Task, when provided, must belong to the same project.
+    if (input.taskId) {
+      const task = await prisma.task.findFirst({
+        where: { id: input.taskId, projectId: testCase.projectId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!task) {
+        throw AppError.badRequest('Task does not belong to this project');
+      }
+    }
+
+    // Evidence file (screenshot/video of the run), when provided, must be a
+    // file asset belonging to this project.
+    if (input.evidenceFileId) {
+      const evidence = await prisma.fileAsset.findFirst({
+        where: { id: input.evidenceFileId, projectId: testCase.projectId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!evidence) {
+        throw AppError.badRequest('Evidence file does not belong to this project');
+      }
     }
 
     let spawnedBugId: string | null = null;
@@ -113,7 +206,7 @@ export class QaService {
         data: {
           testCaseId: input.testCaseId,
           taskId: input.taskId || null,
-          executedById,
+          executedById: actor.id,
           result: input.result,
           actualResult: input.actualResult,
           notes: input.notes || null,
@@ -129,7 +222,7 @@ export class QaService {
         const existingOpenBug = await tx.bug.findFirst({
           where: {
             testCaseId: input.testCaseId,
-            status: { in: [BugStatus.OPEN, BugStatus.TRIAGED, BugStatus.IN_PROGRESS] },
+            status: { in: [BugStatus.OPEN, BugStatus.TRIAGED, BugStatus.IN_PROGRESS, BugStatus.REOPENED] },
           },
         });
 
@@ -147,7 +240,7 @@ export class QaService {
               stepsToReproduce: testCase.steps,
               expectedResult: testCase.expectedResult,
               actualResult: input.actualResult,
-              reporterId: executedById,
+              reporterId: actor.id,
               status: BugStatus.OPEN,
             },
           });
@@ -162,7 +255,7 @@ export class QaService {
     if (input.result === TestRunResult.FAIL && spawnedBugId) {
       await activityService.log({
         projectId: testCase.projectId,
-        actorId: executedById,
+        actorId: actor.id,
         type: 'BUG_AUTO_SPAWNED',
         message: `Bug auto-created from failed test: "${testCase.title}"`,
         visibility: CommentVisibility.INTERNAL,
@@ -178,7 +271,7 @@ export class QaService {
         message: `Test run failed on "${testCase.title}". Automated bug opened.`,
         entityType: 'Bug',
         entityId: spawnedBugId,
-        linkUrl: `/app/projects/${testCase.projectId}?tab=bugs&bugId=${spawnedBugId}`,
+        linkUrl: `/app/projects/${testCase.projectId}?tab=qa&bugId=${spawnedBugId}`,
       });
     }
 
@@ -186,14 +279,57 @@ export class QaService {
   }
 
   /**
-   * Creates a manual bug report.
+   * Creates a manual bug report. Internal staff can report bugs directly;
+   * clients may file portal feedback bugs scoped to their own organization.
    */
-  async createBug(input: CreateBugInput, reporterId: string) {
+  async createBug(input: CreateBugInput, actor: AuthenticatedUser) {
+    const allowedRoles = [
+      UserRole.SUPER_ADMIN,
+      UserRole.ADMIN,
+      UserRole.PROJECT_MANAGER,
+      UserRole.DEVELOPER,
+      UserRole.QA,
+      UserRole.CLIENT,
+    ];
+    if (!allowedRoles.includes(actor.role)) {
+      throw AppError.forbidden('Insufficient permissions to report bugs');
+    }
+
+    await assertProjectWritable(actor, input.projectId);
+
+    // Clients may not assign internal staff to bugs they report.
+    if (actor.role === UserRole.CLIENT && input.assigneeId) {
+      throw AppError.forbidden('Clients cannot assign internal staff to bugs');
+    }
+
     const project = await prisma.project.findFirst({
       where: { id: input.projectId, deletedAt: null },
     });
     if (!project) {
       throw AppError.notFound('Project not found');
+    }
+
+    // Cross-entity assignment validation.
+    if (input.requirementId) {
+      const req = await prisma.requirement.findFirst({
+        where: { id: input.requirementId, projectId: input.projectId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!req) throw AppError.badRequest('Requirement does not belong to this project');
+    }
+    if (input.taskId) {
+      const task = await prisma.task.findFirst({
+        where: { id: input.taskId, projectId: input.projectId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!task) throw AppError.badRequest('Task does not belong to this project');
+    }
+    if (input.testCaseId) {
+      const testCase = await prisma.testCase.findFirst({
+        where: { id: input.testCaseId, projectId: input.projectId },
+        select: { id: true },
+      });
+      if (!testCase) throw AppError.badRequest('Test case does not belong to this project');
     }
 
     // If assignee provided, verify project membership
@@ -224,7 +360,7 @@ export class QaService {
         expectedResult: input.expectedResult,
         actualResult: input.actualResult,
         environment: input.environment || null,
-        reporterId,
+        reporterId: actor.id,
         assigneeId: input.assigneeId || null,
         status: BugStatus.OPEN,
       },
@@ -235,7 +371,7 @@ export class QaService {
     });
 
     await auditService.log({
-      actorId: reporterId,
+      actorId: actor.id,
       action: 'BUG_CREATED',
       entityType: 'Bug',
       entityId: bug.id,
@@ -244,7 +380,7 @@ export class QaService {
 
     await activityService.log({
       projectId: bug.projectId,
-      actorId: reporterId,
+      actorId: actor.id,
       type: 'BUG_REPORTED',
       message: `Bug reported: "${bug.title}" (${bug.severity})`,
       visibility: CommentVisibility.INTERNAL,
@@ -252,7 +388,7 @@ export class QaService {
       entityId: bug.id,
     });
 
-    if (bug.assigneeId && bug.assigneeId !== reporterId) {
+    if (bug.assigneeId && bug.assigneeId !== actor.id) {
       await notificationService.notify({
         userId: bug.assigneeId,
         type: NotificationType.BUG_ASSIGNED,
@@ -260,7 +396,7 @@ export class QaService {
         message: `You were assigned bug "${bug.title}" (${bug.severity})`,
         entityType: 'Bug',
         entityId: bug.id,
-        linkUrl: `/app/projects/${bug.projectId}?tab=bugs&bugId=${bug.id}`,
+        linkUrl: `/app/projects/${bug.projectId}?tab=qa&bugId=${bug.id}`,
       });
     }
 
@@ -268,9 +404,9 @@ export class QaService {
   }
 
   /**
-   * Updates bug status and handles retest notifications.
+   * Updates bug status with transition + role enforcement.
    */
-  async updateBugStatus(id: string, input: UpdateBugStatusInput, actorId: string, actorRole: UserRole) {
+  async updateBugStatus(id: string, input: UpdateBugStatusInput, actor: AuthenticatedUser) {
     const bug = await prisma.bug.findUnique({
       where: { id },
       include: { project: true, reporter: true, assignee: true },
@@ -279,9 +415,26 @@ export class QaService {
       throw AppError.notFound('Bug not found');
     }
 
-    // Clients cannot change bug status directly
-    if (actorRole === UserRole.CLIENT) {
+    await requireProjectAccess(actor, bug.projectId);
+
+    if (actor.role === UserRole.CLIENT) {
       throw AppError.forbidden('Clients cannot modify bug lifecycle status');
+    }
+
+    if (input.status === bug.status) {
+      throw AppError.badRequest(`Bug is already in ${input.status} status`);
+    }
+
+    const allowedNext = BUG_TRANSITIONS[bug.status];
+    if (!allowedNext.includes(input.status)) {
+      throw AppError.forbidden(`Cannot move bug from ${bug.status} to ${input.status}`);
+    }
+
+    if (!STAFF_WITH_FULL_BUG_CONTROL.includes(actor.role as UserRole as any)) {
+      const gate = BUG_STATUS_ENTRY_GATES[input.status];
+      if (!gate || !gate.includes(actor.role as any)) {
+        throw AppError.forbidden(`Your role cannot move a bug to ${input.status}`);
+      }
     }
 
     const previousStatus = bug.status;
@@ -302,16 +455,29 @@ export class QaService {
     });
 
     await auditService.log({
-      actorId,
+      actorId: actor.id,
       action: 'BUG_STATUS_CHANGED',
       entityType: 'Bug',
       entityId: bug.id,
       metadata: { fromStatus: previousStatus, toStatus: input.status, comment: input.comment },
     });
 
+    // Persist the optional status-change note as a comment so it appears in
+    // the bug timeline instead of being silently dropped.
+    if (input.comment?.trim()) {
+      await prisma.bugComment.create({
+        data: {
+          bugId: bug.id,
+          authorId: actor.id,
+          content: input.comment,
+          visibility: CommentVisibility.INTERNAL,
+        },
+      });
+    }
+
     await activityService.log({
       projectId: bug.projectId,
-      actorId,
+      actorId: actor.id,
       type: 'BUG_STATUS_UPDATED',
       message: `Bug "${bug.title}" status changed to ${input.status}`,
       visibility: CommentVisibility.INTERNAL,
@@ -321,6 +487,11 @@ export class QaService {
 
     // Retest cycle: if bug is marked READY_FOR_RETEST, notify QA reporter immediately!
     if (input.status === BugStatus.READY_FOR_RETEST) {
+      const reporter = await prisma.user.findUnique({
+        where: { id: bug.reporterId },
+        select: { role: true },
+      });
+      const isClientReporter = reporter?.role === UserRole.CLIENT;
       await notificationService.notify({
         userId: bug.reporterId,
         type: NotificationType.BUG_READY_FOR_RETEST,
@@ -328,7 +499,10 @@ export class QaService {
         message: `Bug "${bug.title}" is ready for QA retest.`,
         entityType: 'Bug',
         entityId: bug.id,
-        linkUrl: `/app/projects/${bug.projectId}?tab=bugs&bugId=${bug.id}`,
+        // Clients must land in the portal, never the internal app workspace.
+        linkUrl: isClientReporter
+          ? `/portal/projects/${bug.projectId}`
+          : `/app/projects/${bug.projectId}?tab=qa&bugId=${bug.id}`,
       });
     }
 
@@ -336,18 +510,20 @@ export class QaService {
   }
 
   /**
-   * Adds comment to bug report.
+   * Adds comment to bug report (project access enforced; client visibility forced).
    */
-  async addComment(bugId: string, input: CreateBugCommentInput, authorId: string, authorRole: UserRole) {
+  async addComment(bugId: string, input: CreateBugCommentInput, actor: AuthenticatedUser) {
     const bug = await prisma.bug.findUnique({ where: { id: bugId } });
     if (!bug) throw AppError.notFound('Bug not found');
 
-    const visibility = authorRole === UserRole.CLIENT ? CommentVisibility.CLIENT_VISIBLE : input.visibility;
+    await requireProjectAccess(actor, bug.projectId);
+
+    const visibility = actor.role === UserRole.CLIENT ? CommentVisibility.CLIENT_VISIBLE : input.visibility;
 
     return prisma.bugComment.create({
       data: {
         bugId,
-        authorId,
+        authorId: actor.id,
         content: input.content,
         visibility,
       },
@@ -356,9 +532,9 @@ export class QaService {
   }
 
   /**
-   * Gets bug details by ID.
+   * Gets bug details by ID (project access enforced).
    */
-  async getBugById(id: string, userRole: UserRole, userOrgId?: string | null) {
+  async getBugById(id: string, actor: AuthenticatedUser) {
     const bug = await prisma.bug.findUnique({
       where: { id },
       include: {
@@ -369,7 +545,7 @@ export class QaService {
         task: { select: { id: true, title: true } },
         testCase: true,
         comments: {
-          where: userRole === UserRole.CLIENT ? { visibility: CommentVisibility.CLIENT_VISIBLE } : undefined,
+          where: actor.role === UserRole.CLIENT ? { visibility: CommentVisibility.CLIENT_VISIBLE } : undefined,
           include: { author: { include: { profile: true } } },
           orderBy: { createdAt: 'asc' },
         },
@@ -378,23 +554,40 @@ export class QaService {
 
     if (!bug) throw AppError.notFound('Bug not found');
 
-    if (userRole === UserRole.CLIENT && bug.project.organizationId !== userOrgId) {
-      throw AppError.notFound('Bug not found');
+    await requireProjectAccess(actor, bug.projectId);
+
+    // Clients see a sanitized bug payload: internal-only corner fields such
+    // as the reproduction environment are stripped to avoid leaking staff
+    // context beyond the portal feedback surface.
+    if (actor.role === UserRole.CLIENT) {
+      const { environment, ...sanitized } = bug as any;
+      return sanitized;
     }
 
     return bug;
   }
 
   /**
-   * Lists bugs with filtering and pagination.
+   * Lists bugs with filtering and pagination, scoped to accessible projects.
    */
-  async listBugs(query: PaginationQueryInput, userRole: UserRole, userOrgId?: string | null) {
+  async listBugs(query: PaginationQueryInput, actor: AuthenticatedUser) {
     const page = query.page || 1;
     const pageSize = query.pageSize || 25;
     const skip = (page - 1) * pageSize;
 
+    const accessible = await getAccessibleProjectIds(actor);
+
     const where: any = {};
-    if (query.projectId) where.projectId = query.projectId;
+    if (query.projectId) {
+      if (accessible === null || accessible.includes(query.projectId)) {
+        where.projectId = query.projectId;
+      } else {
+        where.projectId = '__no_access__';
+      }
+    } else if (accessible !== null) {
+      where.projectId = { in: accessible };
+    }
+
     if (query.status) where.status = query.status;
     if (query.priority) where.priority = query.priority;
     if (query.assigneeId) where.assigneeId = query.assigneeId;
@@ -403,10 +596,6 @@ export class QaService {
         { title: { contains: query.search, mode: 'insensitive' } },
         { description: { contains: query.search, mode: 'insensitive' } },
       ];
-    }
-
-    if (userRole === UserRole.CLIENT) {
-      where.project = { organizationId: userOrgId, deletedAt: null };
     }
 
     const [bugs, total] = await Promise.all([

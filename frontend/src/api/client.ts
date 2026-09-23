@@ -22,6 +22,14 @@ class ApiClient {
     };
   }
 
+  /** Clears the stored session and notifies the auth context to reset state. */
+  private handleSessionExpired(): void {
+    localStorage.removeItem('deliveryos_token');
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('deliveryos:session-expired'));
+    }
+  }
+
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = endpoint.startsWith('http') ? endpoint : `/api${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
 
@@ -45,6 +53,18 @@ class ApiClient {
       const err: any = new Error(message);
       err.code = body?.error?.code || 'UNKNOWN_ERROR';
       err.status = res.status;
+
+      // Expired/invalid session: force a clean logout so the router sends the
+      // user back to /login. Credential failures on /auth/login must be
+      // surfaced to the form instead of triggering a silent redirect.
+      const isAuthEndpoint = endpoint.includes('/auth/login') || endpoint.includes('/auth/me');
+      const isSuspendedOrDeactivated =
+        body?.error?.code === 'FORBIDDEN' && /suspended|deactivated/i.test(body?.error?.message || '');
+
+      if (!isAuthEndpoint && (res.status === 401 || isSuspendedOrDeactivated)) {
+        this.handleSessionExpired();
+      }
+
       throw err;
     }
 

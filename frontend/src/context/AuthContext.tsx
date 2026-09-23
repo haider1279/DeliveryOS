@@ -26,7 +26,8 @@ interface AuthContextType {
   user: AuthUser | null;
   token: string | null;
   isLoading: boolean;
-  login: (email: string, passwordPlain: string) => Promise<void>;
+  login: (email: string, passwordPlain: string) => Promise<AuthUser>;
+  setSession: (token: string, user: AuthUser) => void;
   logout: () => void;
   devLoginAs: (email: string) => Promise<void>;
 }
@@ -57,6 +58,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     fetchMe();
+
+    // Centralized 401/403 handling in the API client dispatches this event so
+    // the auth context can reset its in-memory state (the router then redirects
+    // the user back to /login).
+    const onSessionExpired = () => logout();
+    window.addEventListener('deliveryos:session-expired', onSessionExpired);
+    return () => window.removeEventListener('deliveryos:session-expired', onSessionExpired);
   }, []);
 
   const login = async (email: string, passwordPlain: string) => {
@@ -69,6 +77,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.setItem('deliveryos_token', res.token);
       setToken(res.token);
       setUser(res.user);
+      return res.user;
     } finally {
       setIsLoading(false);
     }
@@ -78,6 +87,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await login(email, 'DeliveryOS123!');
   };
 
+  const setSession = (token: string, user: AuthUser) => {
+    localStorage.setItem('deliveryos_token', token);
+    setToken(token);
+    setUser(user);
+  };
+
   const logout = () => {
     localStorage.removeItem('deliveryos_token');
     setToken(null);
@@ -85,7 +100,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, isLoading, login, logout, devLoginAs }}>
+    <AuthContext.Provider value={{ user, token, isLoading, login, setSession, logout, devLoginAs }}>
       {children}
     </AuthContext.Provider>
   );

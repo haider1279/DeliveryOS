@@ -2,8 +2,9 @@ import { prisma } from '../../config/prisma';
 import { AppError } from '../../errors/AppError';
 import { auditService } from '../../services/audit.service';
 import { activityService } from '../../services/notification.service';
-import { UserRole, CommentVisibility, ProjectStatus } from '@deliveryos/shared';
+import { UserRole, UserStatus, CommentVisibility, ProjectStatus } from '@deliveryos/shared';
 import type { CreateProjectDTO, UpdateProjectDTO, AddProjectMemberDTO, AuthenticatedUser } from '@deliveryos/shared';
+import { requireProjectAccess, getAccessibleProjectIds, assertProjectWritable } from '../../services/project-access.service';
 
 export const projectService = {
   async create(actor: AuthenticatedUser, dto: CreateProjectDTO) {
@@ -13,6 +14,72 @@ export const projectService = {
 
     const existing = await prisma.project.findFirst({ where: { code: dto.code } });
     if (existing) throw new AppError('CONFLICT', `Project code "${dto.code}" is already in use`, 409);
+
+    // Only trust ids that actually resolve to a live organization and an
+    // active project manager — never silently accept arbitrary ids.
+    const [org, pm] = await Promise.all([
+      prisma.organization.findFirst({ where: { id: dto.organizationId, deletedAt: null } }),
+      prisma.user.findFirst({ where: { id: dto.projectManagerId, role: UserRole.PROJECT_MANAGER } }),
+    ]);
+    if (!org) throw new AppError('NOT_FOUND', 'Organization not found', 404);
+    if (org.status === 'INACTIVE') {
+      throw new AppError('FORBIDDEN', 'This organization is inactive and cannot accept new projects', 403);
+    }
+    if (!pm || pm.status !== UserStatus.ACTIVE) {
+      throw new AppError('BUSINESS_RULE_VIOLATION', 'Project manager must be an active PROJECT_MANAGER user', 400);
+    }
+
+    // Non-super-admin staff may only create projects inside their own
+    // organization — otherwise a PM could plant projects in a foreign tenant.
+    // ADMIN is globally scoped (mirrors canAccessProject), so like SUPER_ADMIN
+    // it may open a project for any organization.
+    if (
+      actor.role !== UserRole.SUPER_ADMIN &&
+      actor.role !== UserRole.ADMIN &&
+      org.id !== actor.organizationId
+    ) {
+      throw new AppError('FORBIDDEN', 'Insufficient permissions to create projects in this organization', 403);
+    }
+
+    // The nominated project manager must have a legitimate relationship to the
+    // project's organization. DeliveryOS models agency-level PMs (users without
+    // a fixed home organization) who manage projects across client
+    // organizations through ProjectMember assignment — e.g. the seed PM manages
+    // both ACME-WMS and STAR-ECOMM with organizationId null. Requiring
+    // `pm.organizationId === org.id` would wrongly block every such assignment,
+    // so the authoritative relationship is the project-level membership a PM
+    // already holds in the target organization (or, for the globally-scoped
+    // SUPER_ADMIN/ADMIN assigners, the assignment itself).
+    //
+    // Tenant isolation is not weakened: access stays membership-scoped
+    // (requireProjectAccess / canAccessProject), and the create transaction
+    // below grants the PM only a membership to this project — never to other
+    // organizations' data.
+    if (
+      pm.organizationId !== org.id &&
+      actor.role !== UserRole.SUPER_ADMIN &&
+      actor.role !== UserRole.ADMIN
+    ) {
+      const existingAssignment = await prisma.projectMember.findFirst({
+        where: {
+          userId: pm.id,
+          leftAt: null,
+          project: {
+            organizationId: org.id,
+            deletedAt: null,
+            status: { notIn: [ProjectStatus.ARCHIVED, ProjectStatus.CANCELLED] },
+          },
+        },
+        select: { id: true },
+      });
+      if (!existingAssignment) {
+        throw new AppError(
+          'BUSINESS_RULE_VIOLATION',
+          'Project manager must belong to the project organization or already manage an active project in it',
+          400
+        );
+      }
+    }
 
     const project = await prisma.$transaction(async (tx) => {
       const p = await tx.project.create({
@@ -53,6 +120,8 @@ export const projectService = {
   },
 
   async getById(actor: AuthenticatedUser, projectId: string) {
+    await requireProjectAccess(actor, projectId);
+
     const project = await prisma.project.findFirst({
       where: { id: projectId, deletedAt: null },
       include: {
@@ -75,15 +144,18 @@ export const projectService = {
 
     if (!project) throw new AppError('NOT_FOUND', 'Project not found', 404);
 
-    // Tenant isolation
-    if (actor.role === UserRole.CLIENT && project.organizationId !== actor.organizationId) {
-      throw new AppError('NOT_FOUND', 'Project not found', 404);
-    }
-
-    // Members not in project (non-admin)
-    if ([UserRole.DEVELOPER, UserRole.QA].includes(actor.role as UserRole)) {
-      const isMember = project.members.some((m) => m.userId === actor.id);
-      if (!isMember) throw new AppError('NOT_FOUND', 'Project not found', 404);
+    // Clients should not see internal staff contact details (emails).
+    if (actor.role === UserRole.CLIENT) {
+      return {
+        ...project,
+        projectManager: project.projectManager
+          ? { id: project.projectManager.id, profile: project.projectManager.profile }
+          : null,
+        members: project.members.map((m) => ({
+          ...m,
+          user: m.user ? { id: m.user.id, profile: m.user.profile } : m.user,
+        })),
+      };
     }
 
     return project;
@@ -110,12 +182,17 @@ export const projectService = {
     // Tenant isolation
     if (actor.role === UserRole.CLIENT) {
       where.organizationId = actor.organizationId;
-    } else if ([UserRole.DEVELOPER, UserRole.QA].includes(actor.role as UserRole)) {
-      const memberProjectIds = await prisma.projectMember.findMany({
-        where: { userId: actor.id, leftAt: null },
-        select: { projectId: true },
-      });
-      where.id = { in: memberProjectIds.map((m) => m.projectId) };
+    } else if (
+      actor.role === UserRole.DEVELOPER ||
+      actor.role === UserRole.QA ||
+      actor.role === UserRole.PROJECT_MANAGER
+    ) {
+      const accessibleProjectIds = await getAccessibleProjectIds(actor);
+      if (accessibleProjectIds && accessibleProjectIds.length > 0) {
+        where.id = { in: accessibleProjectIds };
+      } else {
+        where.id = { in: [] };
+      }
     }
 
     const [total, items] = await Promise.all([
@@ -137,6 +214,8 @@ export const projectService = {
   },
 
   async update(actor: AuthenticatedUser, projectId: string, dto: UpdateProjectDTO) {
+    await requireProjectAccess(actor, projectId);
+
     if (![UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(actor.role as UserRole)) {
       throw new AppError('FORBIDDEN', 'Insufficient permissions', 403);
     }
@@ -153,15 +232,26 @@ export const projectService = {
       });
     }
 
+    // Duplicate code guard (code is unique; other projects may hold it).
+    if (dto.code && dto.code !== project.code) {
+      const existing = await prisma.project.findFirst({ where: { code: dto.code } });
+      if (existing) throw new AppError('CONFLICT', `Project code "${dto.code}" is already in use`, 409);
+    }
+
     const updated = await prisma.project.update({
       where: { id: projectId },
       data: {
         name: dto.name ?? project.name,
+        code: dto.code ?? project.code,
         description: dto.description,
         status: dto.status as any ?? project.status,
         priority: dto.priority as any ?? project.priority,
+        startDate: dto.startDate !== undefined ? (dto.startDate ? new Date(dto.startDate) : null) : project.startDate,
         targetDate: dto.targetDate !== undefined ? (dto.targetDate ? new Date(dto.targetDate) : null) : project.targetDate,
-        budget: dto.budget ?? project.budget,
+        budget: dto.budget !== undefined ? (dto.budget ?? null) : project.budget,
+        currency: dto.currency ?? project.currency,
+        estimatedEffortHours: dto.estimatedEffortHours !== undefined ? (dto.estimatedEffortHours ?? null) : project.estimatedEffortHours,
+        actualEffortHours: dto.actualEffortHours !== undefined ? (dto.actualEffortHours ?? null) : project.actualEffortHours,
         notes: dto.notes,
         completedAt: dto.status === ProjectStatus.COMPLETED ? new Date() : project.completedAt,
       },
@@ -171,6 +261,8 @@ export const projectService = {
   },
 
   async addMember(actor: AuthenticatedUser, projectId: string, dto: AddProjectMemberDTO) {
+    await assertProjectWritable(actor, projectId);
+
     if (![UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(actor.role as UserRole)) {
       throw new AppError('FORBIDDEN', 'Insufficient permissions', 403);
     }
@@ -205,6 +297,8 @@ export const projectService = {
   },
 
   async removeMember(actor: AuthenticatedUser, projectId: string, userId: string) {
+    await requireProjectAccess(actor, projectId);
+
     if (![UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(actor.role as UserRole)) {
       throw new AppError('FORBIDDEN', 'Insufficient permissions', 403);
     }

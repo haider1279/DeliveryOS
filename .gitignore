@@ -27,6 +27,10 @@ yarn-error.log*
 # Testing & Coverage
 coverage/
 test-results/
+playwright-report/
+
+# Local dev mailbox (emails captured when no SMTP is configured)
+backend/dev-mail/
 
 # Editor & OS files
 .DS_Store

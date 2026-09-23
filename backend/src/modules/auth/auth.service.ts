@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../../config/prisma';
 import { config } from '../../config';
@@ -29,12 +30,11 @@ export class AuthService {
       throw AppError.forbidden('Your account invitation is pending activation. Please accept your invite to set up your password.');
     }
 
-    // Verify password if hash exists, or verify default dev password
+    // Verify the password hash. Accounts without a hash (Supabase-managed)
+    // can never authenticate via this local path.
     let isValid = false;
     if (user.passwordHash) {
       isValid = await bcrypt.compare(passwordPlain, user.passwordHash);
-    } else if (config.nodeEnv !== 'production' && (passwordPlain === 'DeliveryOS123!' || passwordPlain === 'password')) {
-      isValid = true;
     }
 
     if (!isValid) {
@@ -81,11 +81,13 @@ export class AuthService {
   }
 
   /**
-   * Activates an invited user account by setting their password.
+   * Activates an invited user account by verifying their one-time invite token
+   * and setting their password. The token is single-use and expires.
    */
-  async completeInvite(input: { email: string; password: string; firstName?: string; lastName?: string }) {
+  async completeInvite(input: { email: string; token: string; password: string; firstName?: string; lastName?: string }) {
+    const email = input.email.toLowerCase();
     const user = await prisma.user.findUnique({
-      where: { email: input.email.toLowerCase() },
+      where: { email },
       include: { profile: true, organization: true },
     });
 
@@ -93,12 +95,26 @@ export class AuthService {
       throw AppError.notFound('Account not found for invitation');
     }
 
-    if (user.status === UserStatus.ACTIVE) {
-      throw AppError.conflict('Account is already activated. Please log in.');
+    if (user.status !== UserStatus.INVITED) {
+      // Sensible message regardless of the actual status (active/suspended)
+      // so pending invitees don't learn the real account state.
+      throw AppError.conflict('This invitation is no longer valid. Please contact your administrator.');
     }
 
-    if (user.status === UserStatus.DEACTIVATED || user.status === UserStatus.SUSPENDED) {
-      throw AppError.forbidden(`Your account is ${user.status.toLowerCase()}. Please contact an administrator.`);
+    // Verify the one-time token (compare against the stored hash).
+    if (!user.inviteTokenHash) {
+      throw AppError.conflict('This invitation has no activation token. Please contact your administrator for a new invite.');
+    }
+    const providedHash = crypto.createHash('sha256').update(input.token).digest('hex');
+    const tokenMatches = crypto.timingSafeEqual(
+      Buffer.from(providedHash, 'hex'),
+      Buffer.from(user.inviteTokenHash, 'hex')
+    );
+    if (!tokenMatches) {
+      throw AppError.badRequest('The invitation token is invalid. Please check the invite link and try again.');
+    }
+    if (!user.inviteTokenExpiresAt || user.inviteTokenExpiresAt < new Date()) {
+      throw AppError.conflict('This invitation has expired. Please contact your administrator for a new invite.');
     }
 
     const passwordHash = await bcrypt.hash(input.password, 10);
@@ -109,6 +125,9 @@ export class AuthService {
         passwordHash,
         status: UserStatus.ACTIVE,
         lastLoginAt: new Date(),
+        // Single-use: clear the token on successful activation.
+        inviteTokenHash: null,
+        inviteTokenExpiresAt: null,
         profile: {
           upsert: {
             create: {
@@ -177,6 +196,7 @@ export class AuthService {
 
   /**
    * Retrieves the currently authenticated user's profile and organization.
+   * Never exposes passwordHash / supabaseUserId back to the client.
    */
   async getMe(userId: string) {
     const user = await prisma.user.findUnique({
@@ -184,7 +204,8 @@ export class AuthService {
       include: { profile: true, organization: true },
     });
     if (!user) throw AppError.notFound('User not found');
-    return user;
+    const { passwordHash, supabaseUserId, ...safeUser } = user as any;
+    return safeUser;
   }
 }
 

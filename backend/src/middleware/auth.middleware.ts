@@ -17,8 +17,47 @@ declare global {
 }
 
 /**
- * Verifies a Supabase JWT (HS256) using SUPABASE_JWT_SECRET.
- * In development with DEV_AUTH_SECRET header, allows test token bypass.
+ * Returns the list of signing keys this environment will accept.
+ * - config.jwtSecret: tokens minted by our own login flow.
+ * - SUPABASE_JWT_SECRET: tokens minted by Supabase Auth (when configured).
+ * - DEV_AUTH_SECRET: integration-test bypass tokens (never in production).
+ */
+function buildVerificationSecrets(): string[] {
+  const secrets = new Set<string>();
+  if (config.jwtSecret) secrets.add(config.jwtSecret);
+  if (config.supabase.jwtSecret && config.supabase.jwtSecret !== config.jwtSecret) {
+    secrets.add(config.supabase.jwtSecret);
+  }
+  if (!config.isProd && config.devAuthSecret) {
+    secrets.add(config.devAuthSecret);
+  }
+  return Array.from(secrets);
+}
+
+/**
+ * Tries every trusted signing key. A token is only accepted when at least one
+ * key verifies it, so a leaked dev secret can never be honored in production.
+ */
+function verifyTokenWithAnySecret(token: string): any {
+  const secrets = buildVerificationSecrets();
+  let lastError: unknown = null;
+  for (const secret of secrets) {
+    try {
+      return jwt.verify(token, secret) as any;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  if (lastError instanceof jwt.TokenExpiredError) throw lastError;
+  if (lastError instanceof jwt.JsonWebTokenError) throw lastError;
+  throw new jwt.JsonWebTokenError('Failed to authenticate token');
+}
+
+/**
+ * Verifies the bearer JWT against every key this environment trusts, then
+ * resolves the real identity from the database. The JWT only identifies the
+ * caller; role/org/status are always read from the database row so tokens can
+ * never be used to impersonate a role by editing claims.
  */
 export async function authMiddleware(
   req: Request,
@@ -33,38 +72,27 @@ export async function authMiddleware(
 
     const token = authHeader.slice(7);
 
-    // Verify token against jwtSecret, supabaseSecret, or devAuthSecret
     let decoded: any;
     try {
-      decoded = jwt.verify(token, config.jwtSecret);
-    } catch {
-      try {
-        if (config.supabase.jwtSecret && config.supabase.jwtSecret !== config.jwtSecret) {
-          decoded = jwt.verify(token, config.supabase.jwtSecret);
-        } else if (config.devAuthSecret) {
-          decoded = jwt.verify(token, config.devAuthSecret);
-        } else {
-          throw new AppError('UNAUTHORIZED', 'Invalid or expired token', 401);
-        }
-      } catch {
-        try {
-          if (config.devAuthSecret) {
-            decoded = jwt.verify(token, config.devAuthSecret);
-          } else {
-            throw new AppError('UNAUTHORIZED', 'Invalid or expired token', 401);
-          }
-        } catch {
-          throw new AppError('UNAUTHORIZED', 'Invalid or expired token', 401);
-        }
+      decoded = verifyTokenWithAnySecret(token);
+    } catch (error) {
+      if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError) {
+        throw new AppError('UNAUTHORIZED', 'Invalid or expired token', 401);
       }
+      throw error;
     }
 
-    const userId: string = decoded.sub;
-    const email: string = decoded.email;
+    const userId: string = decoded?.sub;
+    const email: string = decoded?.email;
+
+    if (!userId || typeof userId !== 'string' || !email || typeof email !== 'string') {
+      throw new AppError('UNAUTHORIZED', 'Invalid token payload', 401);
+    }
 
     // Look up user in our DB by id, supabaseUserId, OR email
     let dbUser: any = null;
-    if (process.env['NODE_ENV'] === 'test' && !process.env['DATABASE_URL'] && decoded.role) {
+    if (config.isTest && !process.env['DATABASE_URL'] && decoded.role) {
+      // Integration tests without a live database use a synthetic identity.
       dbUser = {
         id: userId,
         email,
@@ -85,7 +113,7 @@ export async function authMiddleware(
           include: { profile: true },
         });
       } catch (dbErr) {
-        if ((process.env['NODE_ENV'] === 'test' || config.isDev) && decoded.role) {
+        if (config.isTest && decoded.role) {
           dbUser = {
             id: userId,
             email,
@@ -100,7 +128,7 @@ export async function authMiddleware(
     }
 
     if (!dbUser) {
-      if ((process.env['NODE_ENV'] === 'test' || config.isDev) && decoded.role) {
+      if (config.isTest && decoded.role) {
         dbUser = {
           id: userId,
           email,

@@ -32,8 +32,10 @@ import {
   InviteUserSchema,
   CompleteInviteSchema,
   UpdateProfileSchema,
+  UpdateUserRoleSchema,
   CreateOrganizationSchema,
   UpdateOrganizationSchema,
+  QualifyOrganizationSchema,
   CreateProjectSchema,
   UpdateProjectSchema,
   AddProjectMemberSchema,
@@ -56,6 +58,7 @@ import {
   UpdateReleaseStatusSchema,
   CreateInvoiceSchema,
   RecordPaymentSchema,
+  RegisterFileSchema,
   PaginationQuerySchema,
 } from './schemas';
 
@@ -64,8 +67,10 @@ export type LoginDTO = z.infer<typeof LoginSchema>;
 export type InviteUserDTO = z.infer<typeof InviteUserSchema>;
 export type CompleteInviteDTO = z.infer<typeof CompleteInviteSchema>;
 export type UpdateProfileDTO = z.infer<typeof UpdateProfileSchema>;
+export type UpdateUserRoleDTO = z.infer<typeof UpdateUserRoleSchema>;
 export type CreateOrganizationDTO = z.infer<typeof CreateOrganizationSchema>;
 export type UpdateOrganizationDTO = z.infer<typeof UpdateOrganizationSchema>;
+export type QualifyOrganizationDTO = z.infer<typeof QualifyOrganizationSchema>;
 export type CreateProjectDTO = z.infer<typeof CreateProjectSchema>;
 export type UpdateProjectDTO = z.infer<typeof UpdateProjectSchema>;
 export type AddProjectMemberDTO = z.infer<typeof AddProjectMemberSchema>;
@@ -88,6 +93,7 @@ export type CreateReleaseDTO = z.infer<typeof CreateReleaseSchema>;
 export type UpdateReleaseStatusDTO = z.infer<typeof UpdateReleaseStatusSchema>;
 export type CreateInvoiceDTO = z.infer<typeof CreateInvoiceSchema>;
 export type RecordPaymentDTO = z.infer<typeof RecordPaymentSchema>;
+export type RegisterFileDTO = z.infer<typeof RegisterFileSchema>;
 export type PaginationQueryDTO = z.infer<typeof PaginationQuerySchema>;
 
 // Standard API Response Envelopes
@@ -141,6 +147,7 @@ export type CompleteInviteInput = CompleteInviteDTO;
 export type UpdateProfileInput = UpdateProfileDTO;
 export type CreateOrganizationInput = CreateOrganizationDTO;
 export type UpdateOrganizationInput = UpdateOrganizationDTO;
+export type QualifyOrganizationInput = QualifyOrganizationDTO;
 export type CreateProjectInput = CreateProjectDTO;
 export type UpdateProjectInput = UpdateProjectDTO;
 export type AddProjectMemberInput = AddProjectMemberDTO;
@@ -163,4 +170,5 @@ export type CreateReleaseInput = CreateReleaseDTO;
 export type UpdateReleaseStatusInput = UpdateReleaseStatusDTO;
 export type CreateInvoiceInput = CreateInvoiceDTO;
 export type RecordPaymentInput = RecordPaymentDTO;
+export type RegisterFileInput = z.infer<typeof RegisterFileSchema>;
 export type PaginationQueryInput = PaginationQueryDTO;

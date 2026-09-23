@@ -5,7 +5,7 @@ import { sendSuccess, sendCreated, buildPaginationMeta } from '../../utils/respo
 export class ReleaseController {
   async create(req: Request, res: Response, next: NextFunction) {
     try {
-      const release = await releaseService.createRelease(req.body, req.user!.id);
+      const release = await releaseService.createRelease(req.body, req.user!);
       sendCreated(res, release, 'Release created successfully');
     } catch (err) {
       next(err);
@@ -18,7 +18,7 @@ export class ReleaseController {
       const release = await releaseService.updateReleaseStatus(
         id,
         req.body,
-        req.user!.id
+        req.user!
       );
       sendSuccess(res, { data: release, message: 'Release status updated' });
     } catch (err) {
@@ -29,7 +29,7 @@ export class ReleaseController {
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);
-      const release = await releaseService.getReleaseById(id);
+      const release = await releaseService.getReleaseById(id, req.user!);
       sendSuccess(res, { data: release });
     } catch (err) {
       next(err);
@@ -38,7 +38,7 @@ export class ReleaseController {
 
   async list(req: Request, res: Response, next: NextFunction) {
     try {
-      const result = await releaseService.listReleases(req.query as any);
+      const result = await releaseService.listReleases(req.query as any, req.user!);
       sendSuccess(res, {
         data: result.releases,
         meta: buildPaginationMeta(result.page, result.pageSize, result.total),

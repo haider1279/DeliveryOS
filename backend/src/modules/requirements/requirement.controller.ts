@@ -129,6 +129,7 @@ export const requirementController = {
   async getVersions(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);
+      await requirementService.assertAccessible(req.user!, id);
       const versions = await prisma.requirementVersion.findMany({
         where: { requirementId: id },
         orderBy: { versionNumber: 'desc' },
@@ -141,6 +142,7 @@ export const requirementController = {
   async getApprovals(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);
+      await requirementService.assertAccessible(req.user!, id);
       const approvals = await prisma.requirementApproval.findMany({
         where: { requirementId: id },
         orderBy: { decidedAt: 'desc' },

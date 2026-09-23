@@ -1,42 +1,64 @@
 import { prisma } from '../../config/prisma';
-import { TaskStatus, BugStatus, InvoiceStatus, TestRunResult, UserRole } from '@deliveryos/shared';
+import { TaskStatus, BugStatus, InvoiceStatus, TestRunResult, UserRole, AuthenticatedUser } from '@deliveryos/shared';
+import { getAccessibleProjectIds } from '../../services/project-access.service';
 
 export class ReportService {
-  async getExecutiveSummary() {
+  /**
+   * Project filter for the given actor. Returns {} for SaaS/agency admins
+   * (all data) and { id: { in: [...] } } for PMs (assigned projects only).
+   */
+  private async scopedWhere(actor: AuthenticatedUser): Promise<any> {
+    const accessible = await getAccessibleProjectIds(actor);
+    if (accessible === null) return {};
+    return { id: { in: accessible } };
+  }
+
+  private async scopedProjectIds(actor: AuthenticatedUser): Promise<string[] | null> {
+    return getAccessibleProjectIds(actor);
+  }
+
+  async getExecutiveSummary(actor: AuthenticatedUser) {
+    const accessibleProjectIds = await this.scopedProjectIds(actor);
+    const projectScope = accessibleProjectIds !== null ? { projectId: { in: accessibleProjectIds } } : {};
+
     const [
-      activeProjectsCount,
+      activeProjects,
       openTasksCount,
       openBugsCount,
-      totalInvoiced,
-      totalPaid,
+      invoices,
     ] = await Promise.all([
-      prisma.project.count({ where: { status: 'ACTIVE', deletedAt: null } }),
+      prisma.project.findMany({
+        where: { status: 'ACTIVE', deletedAt: null, ...(accessibleProjectIds !== null ? { id: { in: accessibleProjectIds } } : {}) },
+        select: { id: true },
+      }),
       prisma.task.count({
         where: {
           deletedAt: null,
           status: { notIn: [TaskStatus.DONE, TaskStatus.CANCELLED] },
+          ...projectScope,
         },
       }),
       prisma.bug.count({
         where: {
           status: { notIn: [BugStatus.CLOSED, BugStatus.WONT_FIX] },
+          ...projectScope,
         },
       }),
       prisma.invoice.findMany({
-        where: { deletedAt: null, status: { not: InvoiceStatus.VOID } },
-        select: { total: true },
-      }),
-      prisma.payment.findMany({
-        select: { amount: true },
+        where: { deletedAt: null, status: { not: InvoiceStatus.VOID }, ...projectScope },
+        include: { payments: true },
       }),
     ]);
 
-    const totalInvoicedAmount = totalInvoiced.reduce((sum, i) => sum + Number(i.total), 0);
-    const totalCollectedAmount = totalPaid.reduce((sum, p) => sum + Number(p.amount), 0);
+    const totalInvoicedAmount = invoices.reduce((sum, i) => sum + Number(i.total), 0);
+    const totalCollectedAmount = invoices.reduce(
+      (sum, i) => sum + i.payments.reduce((s, p) => s + Number(p.amount), 0),
+      0
+    );
     const outstandingAmount = Math.max(0, totalInvoicedAmount - totalCollectedAmount);
 
     return {
-      activeProjectsCount,
+      activeProjectsCount: activeProjects.length,
       openTasksCount,
       openBugsCount,
       totalInvoicedAmount: Number(totalInvoicedAmount.toFixed(2)),
@@ -45,19 +67,38 @@ export class ReportService {
     };
   }
 
-  async getDeveloperWorkload() {
+  async getDeveloperWorkload(actor: AuthenticatedUser) {
+    const accessibleProjectIds = await this.scopedProjectIds(actor);
+
+    // For PMs, workload is limited to members of their assigned projects.
+    let memberUserIds: string[] | null = null;
+    if (accessibleProjectIds !== null && accessibleProjectIds.length > 0) {
+      const members = await prisma.projectMember.findMany({
+        where: { projectId: { in: accessibleProjectIds }, leftAt: null },
+        select: { userId: true },
+        distinct: ['userId'],
+      });
+      memberUserIds = members.map((m) => m.userId);
+    }
+
     const developers = await prisma.user.findMany({
       where: {
         role: { in: [UserRole.DEVELOPER, UserRole.PROJECT_MANAGER] },
         status: 'ACTIVE',
+        ...(memberUserIds !== null && memberUserIds.length > 0 ? { id: { in: memberUserIds } } : {}),
+        ...(memberUserIds !== null && memberUserIds.length === 0 ? { id: '__none__' } : {}),
       },
       include: {
         profile: true,
         assignedTasks: {
-          where: { deletedAt: null },
+          where: {
+            deletedAt: null,
+            ...(accessibleProjectIds !== null ? { projectId: { in: accessibleProjectIds } } : {}),
+          },
           select: { id: true, status: true, estimatedHours: true, actualHours: true },
         },
         timeEntries: {
+          where: accessibleProjectIds !== null ? { projectId: { in: accessibleProjectIds } } : undefined,
           select: { durationMinutes: true, date: true },
         },
       },
@@ -90,12 +131,18 @@ export class ReportService {
     });
   }
 
-  async getQaMetrics() {
+  async getQaMetrics(actor: AuthenticatedUser) {
+    const accessibleProjectIds = await this.scopedProjectIds(actor);
+    const testRunScope =
+      accessibleProjectIds !== null ? { testCase: { projectId: { in: accessibleProjectIds } } } : {};
+    const bugScope = accessibleProjectIds !== null ? { projectId: { in: accessibleProjectIds } } : {};
+
     const [totalRuns, passedRuns, failedRuns, bugs] = await Promise.all([
-      prisma.testRun.count(),
-      prisma.testRun.count({ where: { result: TestRunResult.PASS } }),
-      prisma.testRun.count({ where: { result: TestRunResult.FAIL } }),
+      prisma.testRun.count({ where: testRunScope }),
+      prisma.testRun.count({ where: { ...testRunScope, result: TestRunResult.PASS } }),
+      prisma.testRun.count({ where: { ...testRunScope, result: TestRunResult.FAIL } }),
       prisma.bug.findMany({
+        where: bugScope,
         select: { severity: true, status: true },
       }),
     ]);
@@ -123,9 +170,9 @@ export class ReportService {
     };
   }
 
-  async getFinancialOverview() {
+  async getFinancialOverview(actor: AuthenticatedUser) {
     const projects = await prisma.project.findMany({
-      where: { deletedAt: null },
+      where: { deletedAt: null, ...(await this.scopedWhere(actor)) },
       include: {
         organization: { select: { id: true, name: true } },
         invoices: {

@@ -5,8 +5,10 @@ import { StatusBadge } from '../../components/ui/StatusBadge';
 import { Modal } from '../../components/ui/Modal';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { useToast } from '../../context/ToastContext';
 
 export const InvoiceList: React.FC = () => {
+  const toast = useToast();
   const [invoices, setInvoices] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [orgs, setOrgs] = useState<any[]>([]);
@@ -81,18 +83,20 @@ export const InvoiceList: React.FC = () => {
         ],
       });
       setIsCreateOpen(false);
+      toast.success('Invoice draft created.');
       fetchInvoices();
     } catch (err: any) {
-      alert(err.message || 'Failed to create invoice');
+      toast.error(err.message || 'Failed to create invoice');
     }
   };
 
   const handleIssue = async (invoiceId: string) => {
     try {
       await api.post(`/invoices/${invoiceId}/issue`);
+      toast.success('Invoice issued and client notified.');
       fetchInvoices();
     } catch (err: any) {
-      alert(err.message || 'Failed to issue invoice');
+      toast.error(err.message || 'Failed to issue invoice');
     }
   };
 
@@ -109,9 +113,10 @@ export const InvoiceList: React.FC = () => {
       setIsPayOpen(false);
       setPayAmount('');
       setPayRef('');
+      toast.success('Payment recorded.');
       fetchInvoices();
     } catch (err: any) {
-      alert(err.message || 'Failed to record payment');
+      toast.error(err.message || 'Failed to record payment');
     }
   };
 

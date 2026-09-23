@@ -23,6 +23,11 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = ''
       case 'PARTIALLY_PAID':
       case 'READY_FOR_QA':
       case 'TRIAGED':
+      case 'FIXED':
+      case 'REOPENED':
+      case 'CODE_REVIEW':
+      case 'INVITED':
+      case 'QA':
         return 'bg-blue-50 text-blue-700 border-blue-200 ring-blue-600/20';
 
       case 'WAITING_FOR_APPROVAL':
@@ -31,6 +36,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = ''
       case 'SUBMITTED':
       case 'READY_FOR_RETEST':
       case 'READY':
+      case 'WONT_FIX':
         return 'bg-amber-50 text-amber-700 border-amber-200 ring-amber-600/20';
 
       case 'BLOCKED':
@@ -39,6 +45,8 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = ''
       case 'OVERDUE':
       case 'CRITICAL':
       case 'HIGH':
+      case 'INACTIVE':
+      case 'SUSPENDED':
         return 'bg-rose-50 text-rose-700 border-rose-200 ring-rose-600/20';
 
       case 'TODO':
@@ -51,6 +59,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = ''
       case 'ARCHIVED':
       case 'CANCELLED':
       case 'VOID':
+      case 'ROLLED_BACK':
         return 'bg-gray-100 text-gray-500 border-gray-200 ring-gray-600/20';
 
       default:

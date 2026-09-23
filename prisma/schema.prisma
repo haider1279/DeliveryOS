@@ -13,6 +13,7 @@ generator client {
 enum UserRole {
   SUPER_ADMIN
   ADMIN
+  BD
   PROJECT_MANAGER
   DEVELOPER
   QA
@@ -29,6 +30,16 @@ enum UserStatus {
 enum OrganizationStatus {
   ACTIVE
   INACTIVE
+}
+
+// Business-development client-acquisition lifecycle. BD creates an
+// organization as a PROSPECT, then qualifies it to APPROVED (handoff to ADMIN
+// onboarding) or REJECTED. Pre-existing/onboarded organizations default to
+// APPROVED so tenant behaviour is unchanged.
+enum OrganizationQualificationStatus {
+  PROSPECT
+  APPROVED
+  REJECTED
 }
 
 enum ProjectStatus {
@@ -213,11 +224,13 @@ enum NotificationType {
 
 model User {
   id              String      @id @default(uuid())
-  supabaseUserId  String?     @unique
-  email           String      @unique
-  passwordHash    String?     // For offline/local integration testing support
-  role            UserRole    @default(DEVELOPER)
-  status          UserStatus  @default(ACTIVE)
+  supabaseUserId     String?     @unique
+  email              String      @unique
+  passwordHash       String?     // For offline/local integration testing support
+  inviteTokenHash    String?     // One-time invite activation token (hashed)
+  inviteTokenExpiresAt DateTime?
+  role               UserRole    @default(DEVELOPER)
+  status             UserStatus  @default(ACTIVE)
   organizationId  String?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
@@ -258,6 +271,7 @@ model User {
   @@index([role])
   @@index([status])
   @@index([organizationId])
+  @@index([inviteTokenHash])
 }
 
 model Profile {
@@ -286,6 +300,11 @@ model Organization {
   city         String?
   country      String?
   status       OrganizationStatus @default(ACTIVE)
+  // BD client-acquisition qualification (owned by the BD role).
+  qualificationStatus OrganizationQualificationStatus @default(APPROVED)
+  qualificationNotes  String?
+  qualifiedById       String?
+  qualifiedAt         DateTime?
   notes        String?
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
@@ -462,6 +481,7 @@ model Estimate {
   createdBy            User           @relation(fields: [createdById], references: [id], onDelete: Restrict)
   approvals            RequirementApproval[]
 
+  @@unique([requirementId, version])
   @@index([requirementId])
   @@index([status])
 }
@@ -482,6 +502,8 @@ model RequirementApproval {
   estimate           Estimate                    @relation(fields: [estimateId], references: [id], onDelete: Restrict)
   decidedBy          User                        @relation(fields: [decidedById], references: [id], onDelete: Restrict)
 
+  // A given estimate version can only be decided once.
+  @@unique([estimateId, estimateVersion])
   @@index([requirementId])
   @@index([estimateId])
   @@index([decidedAt])

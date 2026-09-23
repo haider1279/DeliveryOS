@@ -5,7 +5,7 @@ import { sendSuccess } from '../../utils/response';
 export class ReportController {
   async getExecutiveSummary(req: Request, res: Response, next: NextFunction) {
     try {
-      const summary = await reportService.getExecutiveSummary();
+      const summary = await reportService.getExecutiveSummary(req.user!);
       sendSuccess(res, { data: summary });
     } catch (err) {
       next(err);
@@ -14,7 +14,7 @@ export class ReportController {
 
   async getDeveloperWorkload(req: Request, res: Response, next: NextFunction) {
     try {
-      const workload = await reportService.getDeveloperWorkload();
+      const workload = await reportService.getDeveloperWorkload(req.user!);
       sendSuccess(res, { data: workload });
     } catch (err) {
       next(err);
@@ -23,7 +23,7 @@ export class ReportController {
 
   async getQaMetrics(req: Request, res: Response, next: NextFunction) {
     try {
-      const metrics = await reportService.getQaMetrics();
+      const metrics = await reportService.getQaMetrics(req.user!);
       sendSuccess(res, { data: metrics });
     } catch (err) {
       next(err);
@@ -32,7 +32,7 @@ export class ReportController {
 
   async getFinancialOverview(req: Request, res: Response, next: NextFunction) {
     try {
-      const overview = await reportService.getFinancialOverview();
+      const overview = await reportService.getFinancialOverview(req.user!);
       sendSuccess(res, { data: overview });
     } catch (err) {
       next(err);

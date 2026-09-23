@@ -18,24 +18,28 @@ import type {
   DecideApprovalDTO,
 } from '@deliveryos/shared';
 import { validateTransition } from './requirement-transitions';
+import { requireProjectAccess, getAccessibleProjectIds, assertProjectWritable } from '../../services/project-access.service';
 import type { AuthenticatedUser } from '@deliveryos/shared';
 
 export const requirementService = {
   async create(actor: AuthenticatedUser, dto: CreateRequirementDTO) {
-    // Verify actor has access to the project
+    await assertProjectWritable(actor, dto.projectId);
+
+    // Per the roles/permissions matrix only managers and the owning client may
+    // submit requirements; DEVELOPER/QA cannot, even as project members.
+    if (
+      ![UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.CLIENT].includes(
+        actor.role as UserRole
+      )
+    ) {
+      throw new AppError('FORBIDDEN', 'Only project managers and clients can submit requirements', 403);
+    }
+
     const project = await prisma.project.findFirst({
       where: { id: dto.projectId, deletedAt: null },
-      include: { members: { where: { userId: actor.id, leftAt: null } } },
+      select: { organizationId: true },
     });
     if (!project) throw new AppError('NOT_FOUND', 'Project not found', 404);
-
-    const isStaff = [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(actor.role as UserRole);
-    const isActiveMember = project.members.length > 0;
-    const isOrgClient = actor.role === UserRole.CLIENT && project.organizationId === actor.organizationId;
-
-    if (!isStaff && !isActiveMember && !isOrgClient) {
-      throw new AppError('FORBIDDEN', 'You do not have access to this project', 403);
-    }
 
     const requirement = await prisma.$transaction(async (tx) => {
       const req = await tx.requirement.create({
@@ -108,6 +112,8 @@ export const requirementService = {
 
     if (!req) throw new AppError('NOT_FOUND', 'Requirement not found', 404);
 
+    await requireProjectAccess(actor, req.project.id);
+
     // Tenant isolation: client can only see their org's requirements
     if (actor.role === UserRole.CLIENT && req.project.organizationId !== actor.organizationId) {
       throw new AppError('NOT_FOUND', 'Requirement not found', 404);
@@ -136,7 +142,6 @@ export const requirementService = {
   }) {
     const where: any = { deletedAt: null };
 
-    if (query.projectId) where.projectId = query.projectId;
     if (query.status) where.status = query.status;
     if (query.priority) where.priority = query.priority;
     if (query.search) {
@@ -147,16 +152,22 @@ export const requirementService = {
     }
 
     // Tenant isolation
+    const andConds: any[] = [];
+    if (query.projectId) andConds.push({ projectId: query.projectId });
+
     if (actor.role === UserRole.CLIENT) {
-      where.project = { organizationId: actor.organizationId };
-    } else if ([UserRole.DEVELOPER, UserRole.QA].includes(actor.role as UserRole)) {
-      // Only see requirements from projects they're a member of
-      const projectIds = await prisma.projectMember.findMany({
-        where: { userId: actor.id, leftAt: null },
-        select: { projectId: true },
-      });
-      where.projectId = { in: projectIds.map((p) => p.projectId) };
+      andConds.push({ project: { organizationId: actor.organizationId } });
+    } else if ([UserRole.DEVELOPER, UserRole.QA, UserRole.PROJECT_MANAGER].includes(actor.role as UserRole)) {
+      // Only see requirements from projects they're a member of (incl. PM)
+      const accessibleProjectIds = await getAccessibleProjectIds(actor);
+      if (accessibleProjectIds && accessibleProjectIds.length > 0) {
+        andConds.push({ projectId: { in: accessibleProjectIds } });
+      } else {
+        andConds.push({ projectId: { in: [] } });
+      }
     }
+
+    if (andConds.length > 0) where.AND = andConds;
 
     const [total, items] = await Promise.all([
       prisma.requirement.count({ where }),
@@ -182,9 +193,11 @@ export const requirementService = {
     });
     if (!req) throw new AppError('NOT_FOUND', 'Requirement not found', 404);
 
-    // Client cannot update requirements
-    if (actor.role === UserRole.CLIENT) {
-      throw new AppError('FORBIDDEN', 'Clients cannot edit requirements directly', 403);
+    await requireProjectAccess(actor, req.projectId);
+
+    // Only managers/admins may edit requirements; DEVELOPER/QA/CLIENT cannot.
+    if (![UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(actor.role as UserRole)) {
+      throw new AppError('FORBIDDEN', 'Only project managers can edit requirements', 403);
     }
 
     // If requirement was already approved, create a new version
@@ -236,6 +249,20 @@ export const requirementService = {
         });
       }
 
+      // A status change caused by this edit must be recorded in the history
+      // so the workflow timeline stays complete and auditable.
+      if (updatedReq.status !== req.status) {
+        await tx.requirementStatusHistory.create({
+          data: {
+            requirementId,
+            fromStatus: req.status as any,
+            toStatus: updatedReq.status as any,
+            actorId: actor.id,
+            comment: dto.changeSummary ?? 'Requirement content updated — reverted to estimating',
+          },
+        });
+      }
+
       return updatedReq;
     });
 
@@ -262,6 +289,8 @@ export const requirementService = {
       },
     });
     if (!req) throw new AppError('NOT_FOUND', 'Requirement not found', 404);
+
+    await requireProjectAccess(actor, req.projectId);
 
     // Tenant check for clients
     if (actor.role === UserRole.CLIENT && req.project.organizationId !== actor.organizationId) {
@@ -299,6 +328,29 @@ export const requirementService = {
         },
       });
 
+      // A client moving the requirement out of review is a formal client
+      // review decision — persist it for traceability.
+      if (
+        req.status === RequirementStatus.CLIENT_REVIEW &&
+        actor.role === UserRole.CLIENT
+      ) {
+        const decision =
+          dto.toStatus === RequirementStatus.COMPLETED
+            ? 'APPROVED'
+            : 'CHANGES_REQUESTED';
+        await tx.clientReview.create({
+          data: {
+            requirementId,
+            projectId: req.projectId,
+            requirementVersion: req.currentVersion,
+            reviewerId: actor.id,
+            decision: decision as any,
+            comment: dto.comment ?? null,
+            decidedAt: now,
+          },
+        });
+      }
+
       return updatedReq;
     });
 
@@ -316,7 +368,7 @@ export const requirementService = {
           message: `"${req.title}" has been submitted for review.`,
           entityType: 'Requirement',
           entityId: requirementId,
-          linkUrl: `/app/projects/${req.projectId}/requirements/${requirementId}`,
+          linkUrl: `/app/projects/${req.projectId}?tab=requirements&requirementId=${requirementId}`,
         }))
       );
     }
@@ -385,16 +437,18 @@ export const requirementService = {
     });
     if (!req) throw new AppError('NOT_FOUND', 'Requirement not found', 404);
 
+    await requireProjectAccess(actor, req.projectId);
+
     const totalHours = (dto.devHours ?? 0) + (dto.qaHours ?? 0) + (dto.designHours ?? 0);
 
     return prisma.$transaction(async (tx) => {
-      // Supersede any prior DRAFT/SENT estimates
-      await tx.estimate.updateMany({
-        where: { requirementId, status: { in: ['DRAFT', 'SENT'] as any } },
-        data: { status: EstimateStatus.SUPERSEDED },
-      });
+        // Supersede any prior DRAFT/SENT estimates
+        await tx.estimate.updateMany({
+          where: { requirementId, status: { in: ['DRAFT', 'SENT'] as any } },
+          data: { status: EstimateStatus.SUPERSEDED },
+        });
 
-      const prevVersion = await tx.estimate.count({ where: { requirementId } });
+        const prevVersion = await tx.estimate.count({ where: { requirementId } });
 
       const estimate = await tx.estimate.create({
         data: {
@@ -417,7 +471,7 @@ export const requirementService = {
       });
 
       return estimate;
-    });
+    }, { isolationLevel: 'Serializable' as any });
   },
 
   async sendEstimate(actor: AuthenticatedUser, requirementId: string, estimateId: string) {
@@ -425,48 +479,74 @@ export const requirementService = {
       throw new AppError('FORBIDDEN', 'Only project managers can send estimates', 403);
     }
 
-    const estimate = await prisma.estimate.findFirst({
-      where: { id: estimateId, requirementId },
-    });
-    if (!estimate) throw new AppError('NOT_FOUND', 'Estimate not found', 404);
-    if (estimate.status !== EstimateStatus.DRAFT) {
-      throw new AppError('CONFLICT', 'Only draft estimates can be sent', 409);
-    }
+    return prisma.$transaction(async (tx) => {
+      const req = await tx.requirement.findFirst({
+        where: { id: requirementId, deletedAt: null },
+        include: { project: { select: { organizationId: true } } },
+      });
+      if (!req) throw new AppError('NOT_FOUND', 'Requirement not found', 404);
 
-    const req = await prisma.requirement.findFirst({
-      where: { id: requirementId },
-      include: { project: { select: { organizationId: true } } },
-    });
-    if (!req) throw new AppError('NOT_FOUND', 'Requirement not found', 404);
+      await requireProjectAccess(actor, req.projectId);
 
-    const [updatedEstimate] = await prisma.$transaction([
-      prisma.estimate.update({
+      // Sending an estimate transitions the requirement into
+      // WAITING_FOR_APPROVAL — it must be a legal workflow step from its
+      // current status and the actor must be allowed to perform it.
+      const validation = validateTransition(
+        req.status as RequirementStatus,
+        RequirementStatus.WAITING_FOR_APPROVAL,
+        actor.role as UserRole
+      );
+      if (!validation.valid) {
+        throw new AppError('INVALID_STATE_TRANSITION', validation.reason, 400);
+      }
+
+      const estimate = await tx.estimate.findFirst({
+        where: { id: estimateId, requirementId },
+      });
+      if (!estimate) throw new AppError('NOT_FOUND', 'Estimate not found', 404);
+      if (estimate.status !== EstimateStatus.DRAFT) {
+        throw new AppError('CONFLICT', 'Only draft estimates can be sent', 409);
+      }
+      // Reject stale estimates built against an older requirement version
+      if (estimate.requirementVersion !== req.currentVersion) {
+        throw new AppError('CONFLICT', 'This estimate is based on an outdated requirement version. Please refresh and re-estimate.', 409);
+      }
+
+      const updatedEstimate = await tx.estimate.update({
         where: { id: estimateId },
         data: { status: EstimateStatus.SENT },
-      }),
-      prisma.requirement.update({
+      });
+
+      await tx.requirement.update({
         where: { id: requirementId },
         data: { status: RequirementStatus.WAITING_FOR_APPROVAL },
-      }),
-    ]);
+      });
 
-    // Notify all client users in the org
-    const clientUsers = await prisma.user.findMany({
-      where: { organizationId: req.project.organizationId, role: 'CLIENT', status: 'ACTIVE' },
+      return updatedEstimate;
+    }, { isolationLevel: 'Serializable' as any }).then(async (updatedEstimate) => {
+      // Post-commit notifications (must never roll back with the send)
+      const req = await prisma.requirement.findFirst({
+        where: { id: requirementId },
+        include: { project: { select: { organizationId: true } } },
+      });
+
+      const clientUsers = await prisma.user.findMany({
+        where: { organizationId: req!.project.organizationId, role: 'CLIENT', status: 'ACTIVE' },
+      });
+      await notificationService.sendMany(
+        clientUsers.map((u) => ({
+          userId: u.id,
+          type: NotificationType.ESTIMATE_SENT,
+          title: 'Estimate Ready for Review',
+          message: `An estimate has been submitted for "${req?.title}". Please review and approve.`,
+          entityType: 'Estimate',
+          entityId: estimateId,
+          linkUrl: `/portal/requirements/${requirementId}`,
+        }))
+      );
+
+      return updatedEstimate;
     });
-    await notificationService.sendMany(
-      clientUsers.map((u) => ({
-        userId: u.id,
-        type: NotificationType.ESTIMATE_SENT,
-        title: 'Estimate Ready for Review',
-        message: `An estimate has been submitted for "${req.title}". Please review and approve.`,
-        entityType: 'Estimate',
-        entityId: estimateId,
-        linkUrl: `/portal/requirements/${requirementId}`,
-      }))
-    );
-
-    return updatedEstimate;
   },
 
   /**
@@ -565,7 +645,7 @@ export const requirementService = {
       });
 
       return approval;
-    });
+    }, { isolationLevel: 'Serializable' as any });
     // Post-transaction notifications (non-blocking)
     // (handled by the controller after this call returns)
   },
@@ -576,6 +656,8 @@ export const requirementService = {
     }
     const req = await prisma.requirement.findFirst({ where: { id: requirementId, deletedAt: null } });
     if (!req) throw new AppError('NOT_FOUND', 'Requirement not found', 404);
+
+    await requireProjectAccess(actor, req.projectId);
 
     await prisma.requirement.update({
       where: { id: requirementId },
@@ -588,5 +670,19 @@ export const requirementService = {
       entityType: 'Requirement',
       entityId: requirementId,
     });
+  },
+
+  /**
+   * Verifies the caller may view a requirement's metadata and returns its id.
+   * Used by version-history/approval-history endpoints before querying.
+   */
+  async assertAccessible(actor: AuthenticatedUser, requirementId: string): Promise<string> {
+    const req = await prisma.requirement.findFirst({
+      where: { id: requirementId, deletedAt: null },
+      select: { id: true, projectId: true },
+    });
+    if (!req) throw new AppError('NOT_FOUND', 'Requirement not found', 404);
+    await requireProjectAccess(actor, req.projectId);
+    return req.id;
   },
 };

@@ -43,11 +43,11 @@ router.patch(
   (req, res, next) => releaseController.updateStatus(req, res, next)
 );
 
-// Record Client Review decision on a requirement
+// Record Client Review decision on a requirement (CLIENT-only capability)
 router.post(
   '/requirements/:requirementId/review',
   authMiddleware,
-  requireRole([UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.CLIENT]),
+  requireRole([UserRole.CLIENT]),
   validate(DecideClientReviewSchema),
   (req, res, next) => releaseController.recordClientReview(req, res, next)
 );
