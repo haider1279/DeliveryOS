@@ -26,6 +26,7 @@ import {
   InvoiceStatus,
   ProjectHealthStatus,
   NotificationType,
+  ProjectRequestStatus,
 } from './enums';
 
 // -------------------------------------------------------------
@@ -121,6 +122,15 @@ export const CreateProjectSchema = z.object({
   currency: z.string().default('USD'),
   estimatedEffortHours: z.number().nonnegative().optional().nullable(),
   notes: z.string().optional(),
+});
+
+export const CreateProjectRequestSchema = z.object({
+  name: z.string().min(2),
+  description: z.string().optional(),
+  budget: z.number().nonnegative().optional().nullable(),
+  targetDate: z.string().datetime().optional().nullable(),
+  notes: z.string().optional(),
+  organizationId: z.string().uuid().optional(),
 });
 
 // Project updates must NOT allow re-homing the project to another organization

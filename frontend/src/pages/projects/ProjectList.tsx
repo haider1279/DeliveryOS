@@ -92,8 +92,7 @@ export const ProjectList: React.FC = () => {
 
   const canCreate =
     user?.role === UserRole.SUPER_ADMIN ||
-    user?.role === UserRole.ADMIN ||
-    user?.role === UserRole.PROJECT_MANAGER;
+    user?.role === UserRole.ADMIN;
 
   return (
     <div className="space-y-6">

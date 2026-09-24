@@ -8,8 +8,8 @@ import { requireProjectAccess, getAccessibleProjectIds, assertProjectWritable } 
 
 export const projectService = {
   async create(actor: AuthenticatedUser, dto: CreateProjectDTO) {
-    if (![UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(actor.role as UserRole)) {
-      throw new AppError('FORBIDDEN', 'Insufficient permissions to create projects', 403);
+    if (![UserRole.SUPER_ADMIN, UserRole.ADMIN].includes(actor.role as UserRole)) {
+      throw new AppError('FORBIDDEN', 'Only administrators (ADMIN or SUPER_ADMIN) can create official projects', 403);
     }
 
     const existing = await prisma.project.findFirst({ where: { code: dto.code } });

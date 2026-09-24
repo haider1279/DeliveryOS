@@ -42,6 +42,12 @@ export enum ProjectStatus {
   ARCHIVED = 'ARCHIVED',
 }
 
+export enum ProjectRequestStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+}
+
 export enum ProjectPriority {
   LOW = 'LOW',
   MEDIUM = 'MEDIUM',

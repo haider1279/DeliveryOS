@@ -120,7 +120,7 @@ describe('DeliveryOS defect regressions (seeded database)', () => {
       where: { projectManagerId: { in: createdUserIds } },
     });
     await prisma.project.deleteMany({
-      where: { id: { in: createdProjectIds } },
+      where: { id: { in: createdProjectIds.filter(Boolean) } },
     });
     await prisma.user.deleteMany({
       where: { id: { in: createdUserIds } },
@@ -406,25 +406,24 @@ describe('DeliveryOS defect regressions (seeded database)', () => {
       expect(res.status).toBe(201);
     });
 
-    it('PM with an org can assign a PM who already manages an active project in that org', async () => {
+    it('PM attempting project creation receives 403 Forbidden', async () => {
       const pmAcmeToken = authService.createDevToken({
         id: pmAcme.id,
         email: pmAcme.email,
         role: pmAcme.role,
       });
 
-      // Grant pmForeign an active membership in an active Acme project.
-      await prisma.projectMember.create({
-        data: {
-          projectId: acmeProjectId,
-          userId: pmForeign.id,
-          membershipRole: 'PROJECT_MANAGER',
-        },
-      });
-
       const res = await request(app)
         .post('/api/projects')
         .set('Authorization', `Bearer ${pmAcmeToken}`)
+        .send(projectPayload(acmeOrgId, pmForeign.id, 'C'));
+      expect(res.status).toBe(403);
+    });
+
+    it('Admin can assign an active PM to an org project', async () => {
+      const res = await request(app)
+        .post('/api/projects')
+        .set('Authorization', `Bearer ${adminToken}`)
         .send(projectPayload(acmeOrgId, pmForeign.id, 'C'));
       createdProjectIds.push(res.body?.data?.id);
       expect(res.status).toBe(201);
@@ -437,14 +436,11 @@ describe('DeliveryOS defect regressions (seeded database)', () => {
         role: pmAcme.role,
       });
 
-      // pmNoAccess is org-less and holds no membership anywhere: the
-      // assignment must be refused to keep tenant isolation intact.
       const res = await request(app)
         .post('/api/projects')
         .set('Authorization', `Bearer ${pmAcmeToken}`)
         .send(projectPayload(acmeOrgId, pmNoAccess.id, 'D'));
-      expect(res.status).toBe(400);
-      expect(res.body?.error?.message).toContain('Project manager must belong to the project organization');
+      expect(res.status).toBe(403);
     });
 
     it('PM is still blocked from planting projects in another organization', async () => {
@@ -470,7 +466,7 @@ describe('DeliveryOS defect regressions (seeded database)', () => {
         .post('/api/projects')
         .set('Authorization', `Bearer ${pmAcmeToken}`)
         .send(projectPayload(acmeOrgId, pmStarlight.id, 'F'));
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(403);
     });
 
     it('a truly foreign PM cannot even read a project outside their assignments', async () => {
@@ -487,7 +483,7 @@ describe('DeliveryOS defect regressions (seeded database)', () => {
 
     it('the assigned PM can access only the project they were assigned, not foreign tenants', async () => {
       const created = await prisma.project.findFirst({
-        where: { id: { in: createdProjectIds }, projectManagerId: pmForeign.id },
+        where: { id: { in: createdProjectIds.filter((x): x is string => Boolean(x)) }, projectManagerId: pmForeign.id },
       });
       expect(created).toBeTruthy();
 

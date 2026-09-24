@@ -52,6 +52,12 @@ enum ProjectStatus {
   ARCHIVED
 }
 
+enum ProjectRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum ProjectPriority {
   LOW
   MEDIUM
@@ -266,6 +272,7 @@ model User {
   auditLogs             AuditLog[]
   recordedPayments      Payment[]
   activityLogs          ProjectActivity[]
+  submittedProjectRequests ProjectRequest[] @relation("ProjectRequestSubmitter")
 
   @@index([email])
   @@index([role])
@@ -314,6 +321,7 @@ model Organization {
   projects     Project[]
   files        FileAsset[]
   invoices     Invoice[]
+  projectRequests ProjectRequest[]
 
   @@index([slug])
   @@index([status])
@@ -361,6 +369,27 @@ model Project {
   @@index([priority])
   @@index([targetDate])
   @@index([deletedAt])
+}
+
+model ProjectRequest {
+  id             String               @id @default(uuid())
+  organizationId String
+  requestedById  String
+  name           String
+  description    String?
+  budget         Decimal?             @db.Decimal(12, 2)
+  targetDate     DateTime?
+  status         ProjectRequestStatus @default(PENDING)
+  notes          String?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requestedBy    User                 @relation("ProjectRequestSubmitter", fields: [requestedById], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([requestedById])
+  @@index([status])
 }
 
 model ProjectMember {

@@ -2,11 +2,15 @@ import { Router } from 'express';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { requireProjectAccess } from '../../middleware/rbac.middleware';
 import { validate } from '../../middleware/validate.middleware';
-import { CreateProjectSchema, UpdateProjectSchema, AddProjectMemberSchema, PaginationQuerySchema } from '@deliveryos/shared';
+import { CreateProjectSchema, CreateProjectRequestSchema, UpdateProjectSchema, AddProjectMemberSchema, PaginationQuerySchema } from '@deliveryos/shared';
 import { projectController } from './project.controller';
+import { projectRequestController } from './project-request.controller';
 
 const router = Router();
 router.use(authMiddleware);
+
+router.get('/requests', projectRequestController.list);
+router.post('/requests', validate(CreateProjectRequestSchema), projectRequestController.create);
 
 router.get('/', validate(PaginationQuerySchema, 'query'), projectController.list);
 router.post('/', validate(CreateProjectSchema), projectController.create);
