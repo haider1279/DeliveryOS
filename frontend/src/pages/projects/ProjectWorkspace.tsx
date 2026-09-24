@@ -67,6 +67,14 @@ export const ProjectWorkspace: React.FC = () => {
   const [isReleaseModalOpen, setIsReleaseModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
+
+  const [availableUsers, setAvailableUsers] = useState<any[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [selectedAddUserId, setSelectedAddUserId] = useState('');
+  const [selectedMembershipRole, setSelectedMembershipRole] = useState('DEVELOPER');
+  const [submittingMember, setSubmittingMember] = useState(false);
+  const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
 
   // Selected item states
   const [selectedReq, setSelectedReq] = useState<any>(null);
@@ -187,6 +195,58 @@ export const ProjectWorkspace: React.FC = () => {
       }
     } catch (err) {
       console.error('Error fetching tab data', err);
+    }
+  };
+
+  const fetchAvailableUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const res: any = await api.get('/users', { pageSize: 100 });
+      setAvailableUsers(res?.users || res || []);
+    } catch (err) {
+      console.error('Failed to fetch users', err);
+      toast.error('Failed to load user list');
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  const handleAddMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedAddUserId) {
+      toast.error('Please select a user to add');
+      return;
+    }
+    setSubmittingMember(true);
+    try {
+      await api.post(`/projects/${id}/members`, {
+        userId: selectedAddUserId,
+        membershipRole: selectedMembershipRole,
+      });
+      toast.success('Team member added successfully');
+      setSelectedAddUserId('');
+      fetchProjectData();
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to add team member');
+    } finally {
+      setSubmittingMember(false);
+    }
+  };
+
+  const handleRemoveMember = async (userId: string) => {
+    setRemovingMemberId(userId);
+    try {
+      const res: any = await api.delete(`/projects/${id}/members/${userId}`);
+      if (res?.openTasksNeedingReassignment?.length > 0) {
+        toast.success(`Member removed. Note: ${res.openTasksNeedingReassignment.length} active task(s) now need reassignment.`);
+      } else {
+        toast.success('Team member removed');
+      }
+      fetchProjectData();
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to remove team member');
+    } finally {
+      setRemovingMemberId(null);
     }
   };
 
@@ -764,25 +824,43 @@ export const ProjectWorkspace: React.FC = () => {
           {/* Sidebar Info */}
           <div className="space-y-6">
             <div className="bg-white p-6 rounded-2xl border border-slate-200/80 space-y-4">
-              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                Assigned Team
-              </h3>
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                  Assigned Team
+                </h3>
+                {canManage && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      fetchAvailableUsers();
+                      setIsTeamModalOpen(true);
+                    }}
+                    className="text-xs font-semibold text-brand-600 hover:text-brand-700 hover:underline flex items-center gap-1"
+                  >
+                    + Manage
+                  </button>
+                )}
+              </div>
               <div className="space-y-3">
-                {project.members?.map((m: any) => (
-                  <div key={m.id} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-600 text-xs font-bold">
-                        {m.user?.profile?.firstName?.[0] || 'U'}
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold text-slate-900">
-                          {m.user?.profile?.displayName || m.user?.email}
-                        </p>
-                        <p className="text-[10px] text-slate-500">{m.membershipRole}</p>
+                {(!project.members || project.members.filter((m: any) => !m.leftAt).length === 0) ? (
+                  <p className="text-xs text-slate-400 italic">No team members assigned yet.</p>
+                ) : (
+                  project.members.filter((m: any) => !m.leftAt).map((m: any) => (
+                    <div key={m.id} className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-600 text-xs font-bold">
+                          {m.user?.profile?.firstName?.[0] || 'U'}
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold text-slate-900">
+                            {m.user?.profile?.displayName || m.user?.email}
+                          </p>
+                          <p className="text-[10px] text-slate-500">{m.membershipRole}</p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
           </div>
@@ -1461,20 +1539,34 @@ export const ProjectWorkspace: React.FC = () => {
                   return true;
                 });
                 return (
-                  <select
-                    value={taskAssigneeId}
-                    onChange={(e) => setTaskAssigneeId(e.target.value)}
-                    className="mt-1 w-full px-3 py-2 rounded-lg border text-xs focus:outline-none"
-                  >
-                    <option value="">
-                      {eligibleAssignees.length === 0 ? 'No eligible developers on project' : 'Unassigned'}
-                    </option>
-                    {eligibleAssignees.map((m: any) => (
-                      <option key={m.id} value={m.user?.id}>
-                        {m.user?.profile?.displayName || m.user?.email}
+                  <div>
+                    <select
+                      value={taskAssigneeId}
+                      onChange={(e) => setTaskAssigneeId(e.target.value)}
+                      className="mt-1 w-full px-3 py-2 rounded-lg border text-xs focus:outline-none"
+                    >
+                      <option value="">
+                        {eligibleAssignees.length === 0 ? 'No eligible developers on project' : 'Unassigned'}
                       </option>
-                    ))}
-                  </select>
+                      {eligibleAssignees.map((m: any) => (
+                        <option key={m.id} value={m.user?.id}>
+                          {m.user?.profile?.displayName || m.user?.email}
+                        </option>
+                      ))}
+                    </select>
+                    {eligibleAssignees.length === 0 && canManage && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          fetchAvailableUsers();
+                          setIsTeamModalOpen(true);
+                        }}
+                        className="mt-1.5 text-[11px] font-semibold text-brand-600 hover:text-brand-700 hover:underline flex items-center gap-1"
+                      >
+                        + Add developers to project
+                      </button>
+                    )}
+                  </div>
                 );
               })()}
             </div>
@@ -2037,6 +2129,111 @@ export const ProjectWorkspace: React.FC = () => {
             </button>
           </div>
         </form>
+      </Modal>
+      {/* Manage Team Modal */}
+      <Modal
+        isOpen={isTeamModalOpen}
+        onClose={() => setIsTeamModalOpen(false)}
+        title="Manage Project Team"
+      >
+        <div className="space-y-6">
+          {/* Current Active Team Members */}
+          <div className="space-y-3">
+            <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+              Current Project Members ({project?.members?.filter((m: any) => !m.leftAt).length || 0})
+            </h4>
+            {(!project?.members || project.members.filter((m: any) => !m.leftAt).length === 0) ? (
+              <p className="text-xs text-slate-500 italic">No active members on this project yet.</p>
+            ) : (
+              <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden">
+                {project.members.filter((m: any) => !m.leftAt).map((m: any) => (
+                  <div key={m.id} className="flex items-center justify-between p-3 bg-white hover:bg-slate-50">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-50 text-brand-700 text-xs font-bold border border-brand-200">
+                        {m.user?.profile?.firstName?.[0] || 'U'}
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-slate-900">
+                          {m.user?.profile?.displayName || m.user?.email}
+                        </p>
+                        <p className="text-[10px] text-slate-500">
+                          Role: <span className="font-semibold text-slate-700">{m.membershipRole}</span> ({m.user?.role})
+                        </p>
+                      </div>
+                    </div>
+                    {canManage && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveMember(m.user?.id || m.userId)}
+                        disabled={removingMemberId === (m.user?.id || m.userId)}
+                        className="px-2.5 py-1 rounded text-[11px] font-semibold text-rose-600 hover:bg-rose-50 border border-rose-200 transition-colors disabled:opacity-50"
+                      >
+                        {removingMemberId === (m.user?.id || m.userId) ? 'Removing...' : 'Remove'}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Add Team Member Section */}
+          {canManage && (
+            <div className="pt-4 border-t border-slate-200 space-y-3">
+              <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                Add New Team Member
+              </h4>
+              <form onSubmit={handleAddMember} className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">Select User</label>
+                  {loadingUsers ? (
+                    <p className="text-xs text-slate-500 py-2">Loading eligible users...</p>
+                  ) : (
+                    <select
+                      value={selectedAddUserId}
+                      onChange={(e) => setSelectedAddUserId(e.target.value)}
+                      required
+                      className="mt-1 w-full px-3 py-2 rounded-lg border text-xs bg-white focus:outline-none focus:border-brand-500"
+                    >
+                      <option value="">-- Choose a user --</option>
+                      {availableUsers
+                        .filter((u: any) => u.status === 'ACTIVE' && u.role !== UserRole.CLIENT)
+                        .filter((u: any) => !project?.members?.some((m: any) => !m.leftAt && (m.userId === u.id || m.user?.id === u.id)))
+                        .map((u: any) => (
+                          <option key={u.id} value={u.id}>
+                            {u.profile?.displayName || u.email} ({u.role})
+                          </option>
+                        ))}
+                    </select>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">Project Membership Role</label>
+                  <select
+                    value={selectedMembershipRole}
+                    onChange={(e) => setSelectedMembershipRole(e.target.value)}
+                    className="mt-1 w-full px-3 py-2 rounded-lg border text-xs bg-white focus:outline-none focus:border-brand-500"
+                  >
+                    <option value="DEVELOPER">DEVELOPER</option>
+                    <option value="QA">QA</option>
+                    <option value="PROJECT_MANAGER">PROJECT_MANAGER</option>
+                  </select>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="submit"
+                    disabled={submittingMember || !selectedAddUserId}
+                    className="px-4 py-2 rounded-lg text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 transition-colors"
+                  >
+                    {submittingMember ? 'Adding...' : 'Add to Project'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+        </div>
       </Modal>
     </div>
   );

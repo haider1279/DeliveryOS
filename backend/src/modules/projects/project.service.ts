@@ -278,10 +278,13 @@ export const projectService = {
 
     const targetUser = await prisma.user.findUnique({
       where: { id: dto.userId },
-      select: { id: true, status: true },
+      select: { id: true, status: true, role: true },
     });
     if (!targetUser || targetUser.status !== 'ACTIVE') {
       throw new AppError('BUSINESS_RULE_VIOLATION', 'Cannot add an inactive or suspended user to a project', 400);
+    }
+    if (targetUser.role === UserRole.CLIENT) {
+      throw new AppError('BUSINESS_RULE_VIOLATION', 'Clients cannot be added as project team members', 400);
     }
 
     const membership = await prisma.projectMember.create({
@@ -300,7 +303,7 @@ export const projectService = {
   },
 
   async removeMember(actor: AuthenticatedUser, projectId: string, userId: string) {
-    await requireProjectAccess(actor, projectId);
+    await assertProjectWritable(actor, projectId);
 
     if (![UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(actor.role as UserRole)) {
       throw new AppError('FORBIDDEN', 'Insufficient permissions', 403);

@@ -47,7 +47,9 @@ export class UserService {
       );
       const memberUserIds = memberships.map((m) => m.userId);
 
-      const scopeOrs: any[] = [];
+      const scopeOrs: any[] = [
+        { role: { in: [UserRole.DEVELOPER, UserRole.QA, UserRole.PROJECT_MANAGER] } },
+      ];
       if (orgIds.length > 0) scopeOrs.push({ organizationId: { in: orgIds } });
       if (memberUserIds.length > 0) scopeOrs.push({ id: { in: memberUserIds } });
 
@@ -57,11 +59,8 @@ export class UserService {
         where.id = { in: [] };
       }
 
-      if (scopeOrs.length > 0) {
+      if (scopeOrs.length > 0 && !where.id) {
         where.AND = [{ OR: scopeOrs }];
-      } else {
-        // PM with no memberships at all: nothing is visible.
-        where.id = { in: [] };
       }
     } else if (query.organizationId) {
       where.organizationId = query.organizationId;

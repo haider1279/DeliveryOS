@@ -23,12 +23,16 @@ export async function canAccessProject(
 
   const project = await prisma.project.findFirst({
     where: { id: projectId, deletedAt: null },
-    select: { id: true, organizationId: true },
+    select: { id: true, organizationId: true, projectManagerId: true },
   });
   if (!project) return false;
 
   if (actor.role === UserRole.CLIENT) {
     return project.organizationId === actor.organizationId;
+  }
+
+  if (actor.role === UserRole.PROJECT_MANAGER && project.projectManagerId === actor.id) {
+    return true;
   }
 
   // PM, DEVELOPER, QA: must be an active member

@@ -4,6 +4,7 @@ import { auditService } from '../../services/audit.service';
 import { notificationService, activityService } from '../../services/notification.service';
 import {
   UserRole,
+  UserStatus,
   TaskStatus,
   CommentVisibility,
   NotificationType,
@@ -73,7 +74,7 @@ export class TaskService {
         },
         include: { user: true },
       });
-      if (!activeMember) {
+      if (!activeMember || activeMember.user.status === UserStatus.SUSPENDED || activeMember.user.status === UserStatus.DEACTIVATED) {
         throw AppError.badRequest('Assigned user is not an active member of this project');
       }
       if (
@@ -196,7 +197,7 @@ export class TaskService {
         },
         include: { user: true },
       });
-      if (!activeMember) {
+      if (!activeMember || activeMember.user.status === UserStatus.SUSPENDED || activeMember.user.status === UserStatus.DEACTIVATED) {
         throw AppError.badRequest('Assigned user is not an active member of this project');
       }
       if (
