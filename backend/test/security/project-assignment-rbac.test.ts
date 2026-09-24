@@ -278,4 +278,26 @@ describe('Project Assignment & Team Member Management RBAC', () => {
     expect(res.body.success).toBe(false);
     expect(res.body.error.message).toMatch(/not an active member/i);
   });
+
+  it('fetches eligible developers and returns strictly DEVELOPER role users', async () => {
+    const res = await request(app)
+      .get(`/api/projects/${projectId}/eligible-developers`)
+      .set('Authorization', `Bearer ${pmToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    // Every returned user must strictly have role === 'DEVELOPER'
+    for (const dev of res.body.data) {
+      expect(dev.role).toBe('DEVELOPER');
+    }
+  });
+
+  it('rejects non-management roles attempting to view eligible developers', async () => {
+    const res = await request(app)
+      .get(`/api/projects/${projectId}/eligible-developers`)
+      .set('Authorization', `Bearer ${clientToken}`);
+
+    expect([403, 404]).toContain(res.status);
+  });
 });

@@ -286,6 +286,9 @@ export const projectService = {
     if (targetUser.role === UserRole.CLIENT) {
       throw new AppError('BUSINESS_RULE_VIOLATION', 'Clients cannot be added as project team members', 400);
     }
+    if (dto.membershipRole === ('DEVELOPER' as any) && targetUser.role !== UserRole.DEVELOPER) {
+      throw new AppError('BUSINESS_RULE_VIOLATION', 'Only users with the DEVELOPER role can be assigned as project developers', 400);
+    }
 
     const membership = await prisma.projectMember.create({
       data: { projectId, userId: dto.userId, membershipRole: dto.membershipRole as any },
@@ -300,6 +303,38 @@ export const projectService = {
     });
 
     return membership;
+  },
+
+  async getEligibleDevelopers(actor: AuthenticatedUser, projectId: string) {
+    await assertProjectWritable(actor, projectId);
+
+    if (![UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(actor.role as UserRole)) {
+      throw new AppError('FORBIDDEN', 'Insufficient permissions to view eligible developers', 403);
+    }
+
+    const activeMembers = await prisma.projectMember.findMany({
+      where: { projectId, leftAt: null },
+      select: { userId: true },
+    });
+    const activeUserIds = activeMembers.map((m) => m.userId);
+
+    const developers = await prisma.user.findMany({
+      where: {
+        role: UserRole.DEVELOPER,
+        status: UserStatus.ACTIVE,
+        id: { notIn: activeUserIds },
+      },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        status: true,
+        profile: { select: { firstName: true, lastName: true, displayName: true, avatarUrl: true } },
+      },
+      orderBy: { email: 'asc' },
+    });
+
+    return developers;
   },
 
   async removeMember(actor: AuthenticatedUser, projectId: string, userId: string) {
