@@ -46,9 +46,22 @@ describe('Project Assignment & Team Member Management RBAC', () => {
       role: UserRole.SUPER_ADMIN,
     });
 
-    const clientLogin = await authService.login('haider1.euroshub@gmail.com', 'Client#2026!DeliveryOS');
-    clientUser = clientLogin.user;
-    clientToken = clientLogin.token;
+    clientUser = await prisma.user.findFirst({ where: { role: UserRole.CLIENT } });
+    if (!clientUser) {
+      clientUser = await prisma.user.create({
+        data: {
+          email: `client-test-${Date.now()}@client.com`,
+          role: UserRole.CLIENT,
+          status: 'ACTIVE',
+          profile: { create: { firstName: 'Test', lastName: 'Client', displayName: 'Test Client' } },
+        },
+      });
+    }
+    clientToken = authService.createDevToken({
+      id: clientUser.id,
+      email: clientUser.email,
+      role: UserRole.CLIENT,
+    });
 
     // Create a second PM user
     const otherPm = await prisma.user.create({
