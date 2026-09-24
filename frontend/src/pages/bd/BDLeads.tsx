@@ -62,9 +62,10 @@ const StatusPill: React.FC<{ status: OrganizationQualificationStatus }> = ({ sta
 // ---------------------------------------------------------------------------
 const OrgCard: React.FC<{
   org: Org;
-  canQualify: boolean;
+  canApprove: boolean;
+  canReject: boolean;
   onQualify: (org: Org, decision: 'APPROVED' | 'REJECTED') => void;
-}> = ({ org, canQualify, onQualify }) => (
+}> = ({ org, canApprove, canReject, onQualify }) => (
   <div className="group bg-white border border-slate-200 rounded-2xl p-5 hover:border-brand-300 hover:shadow-md transition-all">
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0 flex-1">
@@ -108,20 +109,24 @@ const OrgCard: React.FC<{
     )}
 
     {/* Action buttons — only on PROSPECT cards for eligible roles */}
-    {canQualify && org.qualificationStatus === OrganizationQualificationStatus.PROSPECT && (
+    {(canApprove || canReject) && org.qualificationStatus === OrganizationQualificationStatus.PROSPECT && (
       <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2">
-        <button
-          onClick={() => onQualify(org, 'APPROVED')}
-          className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
-        >
-          <CheckCircle2 className="h-3.5 w-3.5" /> Approve
-        </button>
-        <button
-          onClick={() => onQualify(org, 'REJECTED')}
-          className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-colors"
-        >
-          <XCircle className="h-3.5 w-3.5" /> Reject
-        </button>
+        {canApprove && (
+          <button
+            onClick={() => onQualify(org, 'APPROVED')}
+            className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" /> Approve
+          </button>
+        )}
+        {canReject && (
+          <button
+            onClick={() => onQualify(org, 'REJECTED')}
+            className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-colors"
+          >
+            <XCircle className="h-3.5 w-3.5" /> Reject
+          </button>
+        )}
       </div>
     )}
 
@@ -143,7 +148,8 @@ export const BDLeads: React.FC = () => {
   const toast = useToast();
 
   const canCreate = [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.BD].includes(user?.role as UserRole);
-  const canQualify = [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.BD].includes(user?.role as UserRole);
+  const canApprove = [UserRole.SUPER_ADMIN, UserRole.ADMIN].includes(user?.role as UserRole);
+  const canReject = [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.BD].includes(user?.role as UserRole);
 
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [loading, setLoading] = useState(true);
@@ -305,7 +311,7 @@ export const BDLeads: React.FC = () => {
             emptyIcon={Clock}
           >
             {prospects.map((org) => (
-              <OrgCard key={org.id} org={org} canQualify={canQualify} onQualify={handleQualify} />
+              <OrgCard key={org.id} org={org} canApprove={canApprove} canReject={canReject} onQualify={handleQualify} />
             ))}
           </Section>
 
@@ -318,7 +324,7 @@ export const BDLeads: React.FC = () => {
             emptyIcon={CheckCircle2}
           >
             {approved.map((org) => (
-              <OrgCard key={org.id} org={org} canQualify={canQualify} onQualify={handleQualify} />
+              <OrgCard key={org.id} org={org} canApprove={canApprove} canReject={canReject} onQualify={handleQualify} />
             ))}
           </Section>
 
@@ -332,7 +338,7 @@ export const BDLeads: React.FC = () => {
               emptyIcon={XCircle}
             >
               {rejected.map((org) => (
-                <OrgCard key={org.id} org={org} canQualify={canQualify} onQualify={handleQualify} />
+                <OrgCard key={org.id} org={org} canApprove={canApprove} canReject={canReject} onQualify={handleQualify} />
               ))}
             </Section>
           )}

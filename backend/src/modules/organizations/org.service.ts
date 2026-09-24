@@ -80,6 +80,12 @@ export class OrgService {
       throw AppError.forbidden('Only BD or administrators can qualify a prospective client');
     }
 
+    if (decision === OrganizationQualificationStatus.APPROVED) {
+      if (actor.role !== UserRole.SUPER_ADMIN && actor.role !== UserRole.ADMIN) {
+        throw AppError.forbidden('Only administrators (ADMIN or SUPER_ADMIN) can approve a lead/prospective client');
+      }
+    }
+
     const org = await prisma.organization.findFirst({ where: { id, deletedAt: null } });
     if (!org) throw AppError.notFound('Organization not found');
 

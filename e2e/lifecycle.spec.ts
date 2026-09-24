@@ -6,7 +6,7 @@ test.describe.serial('DeliveryOS Full Role-Based E2E Lifecycle', () => {
   const projectCode = `APX${(timestamp % 10000).toString().padStart(4, '0')}`;
   const projectName = `Apex Delivery ${timestamp}`;
 
-  test('Step 1: BD logs in, creates a prospect organization, and approves it', async ({ page }) => {
+  test('Step 1: BD logs in and creates a prospect organization', async ({ page }) => {
     await page.goto('/login');
     await page.getByLabel(/email/i).fill('haider4.euroshub@gmail.com');
     await page.getByLabel(/password/i).fill('BD#2026!DeliveryOS');
@@ -27,19 +27,31 @@ test.describe.serial('DeliveryOS Full Role-Based E2E Lifecycle', () => {
     const cardHeading = page.getByRole('heading', { name: orgName, exact: true });
     await expect(cardHeading).toBeVisible();
 
-    // Click Approve on the specific card
+    // Verify BD cannot approve the prospect (Approve button is not visible for BD)
     const card = page.locator('div.group').filter({ has: cardHeading });
-    await card.getByRole('button', { name: /Approve/i }).click();
-    await page.getByRole('button', { name: /Confirm Approval/i }).click();
+    await expect(card.getByRole('button', { name: /Approve/i })).not.toBeVisible();
   });
 
-  test('Step 2: Admin logs in and creates a project for the approved organization assigned to PM', async ({ page }) => {
+  test('Step 2: Admin logs in, approves the prospect organization, and creates a project for PM', async ({ page }) => {
     await page.goto('/login');
     await page.getByLabel(/email/i).fill('haider2.euroshub@gmail.com');
     await page.getByLabel(/password/i).fill('Admin#2026!DeliveryOS');
     await page.getByRole('button', { name: /sign in/i }).click();
     await expect(page).toHaveURL(/\/app\/dashboard/);
 
+    // Admin approves the prospect lead
+    const leadsLink = page.getByRole('navigation').getByRole('link', { name: /Clients & Leads/i });
+    await leadsLink.click();
+    await expect(page).toHaveURL(/\/app\/leads/);
+
+    const cardHeading = page.getByRole('heading', { name: orgName, exact: true });
+    await expect(cardHeading).toBeVisible();
+
+    const card = page.locator('div.group').filter({ has: cardHeading });
+    await card.getByRole('button', { name: /Approve/i }).click();
+    await page.getByRole('button', { name: /Confirm Approval/i }).click();
+
+    // Now create project for approved organization
     await page.getByRole('link', { name: /^Projects$/i }).click();
     await expect(page).toHaveURL(/\/app\/projects/);
 
