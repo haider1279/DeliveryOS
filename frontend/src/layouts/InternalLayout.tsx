@@ -16,6 +16,7 @@ import {
   Sparkles,
   Menu,
   X,
+  FileText,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { UserRole } from '@deliveryos/shared';
@@ -101,6 +102,7 @@ export const InternalLayout: React.FC = () => {
       : []),
     ...(isRole([UserRole.SUPER_ADMIN, UserRole.ADMIN])
       ? [
+          { label: 'Project Requests', path: '/app/project-requests', icon: FileText },
           { label: 'Team', path: '/app/users', icon: Users },
           { label: 'Audit Log', path: '/app/audit', icon: ShieldCheck },
         ]

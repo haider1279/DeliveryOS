@@ -38,6 +38,7 @@ import {
   QualifyOrganizationSchema,
   CreateProjectSchema,
   CreateProjectRequestSchema,
+  DecideProjectRequestSchema,
   UpdateProjectSchema,
   AddProjectMemberSchema,
   CreateRequirementSchema,
@@ -74,6 +75,7 @@ export type UpdateOrganizationDTO = z.infer<typeof UpdateOrganizationSchema>;
 export type QualifyOrganizationDTO = z.infer<typeof QualifyOrganizationSchema>;
 export type CreateProjectDTO = z.infer<typeof CreateProjectSchema>;
 export type CreateProjectRequestDTO = z.infer<typeof CreateProjectRequestSchema>;
+export type DecideProjectRequestDTO = z.infer<typeof DecideProjectRequestSchema>;
 export type UpdateProjectDTO = z.infer<typeof UpdateProjectSchema>;
 export type AddProjectMemberDTO = z.infer<typeof AddProjectMemberSchema>;
 export type CreateRequirementDTO = z.infer<typeof CreateRequirementSchema>;
@@ -152,6 +154,7 @@ export type UpdateOrganizationInput = UpdateOrganizationDTO;
 export type QualifyOrganizationInput = QualifyOrganizationDTO;
 export type CreateProjectInput = CreateProjectDTO;
 export type CreateProjectRequestInput = CreateProjectRequestDTO;
+export type DecideProjectRequestInput = DecideProjectRequestDTO;
 export type UpdateProjectInput = UpdateProjectDTO;
 export type AddProjectMemberInput = AddProjectMemberDTO;
 export type CreateRequirementInput = CreateRequirementDTO;

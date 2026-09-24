@@ -133,6 +133,11 @@ export const CreateProjectRequestSchema = z.object({
   organizationId: z.string().uuid().optional(),
 });
 
+export const DecideProjectRequestSchema = z.object({
+  decision: z.nativeEnum(ProjectRequestStatus),
+  notes: z.string().optional(),
+});
+
 // Project updates must NOT allow re-homing the project to another organization
 // or silently swapping the project manager (both are ownership-level fields set
 // only at creation time by trusted staff).

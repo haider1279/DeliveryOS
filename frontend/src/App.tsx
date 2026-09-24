@@ -16,6 +16,7 @@ import { InvoiceList } from './pages/finance/InvoiceList';
 import { ReportsDashboard } from './pages/reports/ReportsDashboard';
 import { TeamManagement } from './pages/admin/TeamManagement';
 import { AuditLogs } from './pages/admin/AuditLogs';
+import { ProjectRequests } from './pages/admin/ProjectRequests';
 import { BDLeads } from './pages/bd/BDLeads';
 import { ClientProjects } from './pages/client/ClientProjects';
 import { ClientProjectDetail } from './pages/client/ClientProjectDetail';
@@ -182,6 +183,14 @@ export const App: React.FC = () => {
                   element={
                     <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN, UserRole.ADMIN]}>
                       <AuditLogs />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="project-requests"
+                  element={
+                    <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN, UserRole.ADMIN]}>
+                      <ProjectRequests />
                     </ProtectedRoute>
                   }
                 />

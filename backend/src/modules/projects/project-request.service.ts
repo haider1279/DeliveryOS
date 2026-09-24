@@ -2,7 +2,7 @@ import { prisma } from '../../config/prisma';
 import { AppError } from '../../errors/AppError';
 import { auditService } from '../../services/audit.service';
 import { UserRole, ProjectRequestStatus } from '@deliveryos/shared';
-import type { CreateProjectRequestDTO, AuthenticatedUser } from '@deliveryos/shared';
+import type { CreateProjectRequestDTO, DecideProjectRequestDTO, AuthenticatedUser } from '@deliveryos/shared';
 
 export const projectRequestService = {
   async create(actor: AuthenticatedUser, dto: CreateProjectRequestDTO) {
@@ -44,8 +44,8 @@ export const projectRequestService = {
         status: ProjectRequestStatus.PENDING,
       },
       include: {
-        organization: { select: { id: true, name: true } },
-        requestedBy: { include: { profile: { select: { firstName: true, lastName: true } } } },
+        organization: { select: { id: true, name: true, slug: true } },
+        requestedBy: { include: { profile: { select: { firstName: true, lastName: true, displayName: true } } } },
       },
     });
 
@@ -60,28 +60,112 @@ export const projectRequestService = {
     return request;
   },
 
-  async list(actor: AuthenticatedUser, query: { organizationId?: string }) {
+  async list(actor: AuthenticatedUser, query: { organizationId?: string; status?: string }) {
+    if (
+      actor.role !== UserRole.SUPER_ADMIN &&
+      actor.role !== UserRole.ADMIN &&
+      actor.role !== UserRole.CLIENT
+    ) {
+      throw new AppError('FORBIDDEN', 'You do not have permission to list project requests', 403);
+    }
+
     const where: any = {};
 
     if (actor.role === UserRole.CLIENT) {
       where.organizationId = actor.organizationId || '00000000-0000-0000-0000-000000000000';
-    } else if (actor.role === UserRole.SUPER_ADMIN || actor.role === UserRole.ADMIN) {
-      if (query.organizationId) {
-        where.organizationId = query.organizationId;
-      }
-    } else {
-      where.organizationId = actor.organizationId || '00000000-0000-0000-0000-000000000000';
+    } else if (query.organizationId) {
+      where.organizationId = query.organizationId;
+    }
+
+    if (query.status && Object.values(ProjectRequestStatus).includes(query.status as any)) {
+      where.status = query.status;
     }
 
     const requests = await prisma.projectRequest.findMany({
       where,
       include: {
-        organization: { select: { id: true, name: true } },
-        requestedBy: { include: { profile: { select: { firstName: true, lastName: true } } } },
+        organization: { select: { id: true, name: true, slug: true } },
+        requestedBy: { include: { profile: { select: { firstName: true, lastName: true, displayName: true } } } },
       },
       orderBy: { createdAt: 'desc' },
     });
 
     return requests;
+  },
+
+  async getById(actor: AuthenticatedUser, id: string) {
+    if (
+      actor.role !== UserRole.SUPER_ADMIN &&
+      actor.role !== UserRole.ADMIN &&
+      actor.role !== UserRole.CLIENT
+    ) {
+      throw new AppError('FORBIDDEN', 'You do not have permission to view project request details', 403);
+    }
+
+    const request = await prisma.projectRequest.findUnique({
+      where: { id },
+      include: {
+        organization: { select: { id: true, name: true, slug: true } },
+        requestedBy: { include: { profile: { select: { firstName: true, lastName: true, displayName: true } } } },
+      },
+    });
+
+    if (!request) {
+      throw new AppError('NOT_FOUND', 'Project request not found', 404);
+    }
+
+    if (actor.role === UserRole.CLIENT && request.organizationId !== actor.organizationId) {
+      throw new AppError('FORBIDDEN', 'You do not have access to this project request', 403);
+    }
+
+    return request;
+  },
+
+  async decide(actor: AuthenticatedUser, id: string, dto: DecideProjectRequestDTO) {
+    if (actor.role !== UserRole.SUPER_ADMIN && actor.role !== UserRole.ADMIN) {
+      throw new AppError('FORBIDDEN', 'Only administrators can approve or reject project requests', 403);
+    }
+
+    const request = await prisma.projectRequest.findUnique({
+      where: { id },
+    });
+
+    if (!request) {
+      throw new AppError('NOT_FOUND', 'Project request not found', 404);
+    }
+
+    if (request.status !== ProjectRequestStatus.PENDING) {
+      throw new AppError(
+        'BAD_REQUEST',
+        `Project request has already been ${request.status.toLowerCase()} and cannot be modified`,
+        400
+      );
+    }
+
+    if (dto.decision !== ProjectRequestStatus.APPROVED && dto.decision !== ProjectRequestStatus.REJECTED) {
+      throw new AppError('BAD_REQUEST', 'Decision must be APPROVED or REJECTED', 400);
+    }
+
+    const updated = await prisma.projectRequest.update({
+      where: { id },
+      data: {
+        status: dto.decision,
+        ...(dto.notes !== undefined && { notes: dto.notes }),
+      },
+      include: {
+        organization: { select: { id: true, name: true, slug: true } },
+        requestedBy: { include: { profile: { select: { firstName: true, lastName: true, displayName: true } } } },
+      },
+    });
+
+    await auditService.log({
+      actorId: actor.id,
+      action: dto.decision === ProjectRequestStatus.APPROVED ? 'PROJECT_REQUEST_APPROVED' : 'PROJECT_REQUEST_REJECTED',
+      entityType: 'ProjectRequest',
+      entityId: id,
+      metadata: { decision: dto.decision, notes: dto.notes },
+    });
+
+    return updated;
   },
 };
