@@ -50,7 +50,7 @@ export const requirementService = {
           priority: dto.priority as any,
           category: dto.category ?? 'General',
           acceptanceCriteria: dto.acceptanceCriteria,
-          status: RequirementStatus.DRAFT,
+          status: RequirementStatus.SUBMITTED,
           currentVersion: 1,
           submittedById: actor.id,
           requestedByUserId: actor.id,
@@ -74,15 +74,33 @@ export const requirementService = {
       await tx.requirementStatusHistory.create({
         data: {
           requirementId: req.id,
-          fromStatus: 'DRAFT' as any,
-          toStatus: RequirementStatus.DRAFT,
+          fromStatus: RequirementStatus.SUBMITTED,
+          toStatus: RequirementStatus.SUBMITTED,
           actorId: actor.id,
-          comment: 'Requirement created',
+          comment: 'Requirement submitted',
         },
       });
 
       return req;
     });
+
+    const pmMembers = await prisma.projectMember.findMany({
+      where: { projectId: dto.projectId, leftAt: null, membershipRole: 'PROJECT_MANAGER' },
+      select: { userId: true },
+    });
+    if (pmMembers.length > 0) {
+      await notificationService.sendMany(
+        pmMembers.map((m) => ({
+          userId: m.userId,
+          type: NotificationType.REQUIREMENT_SUBMITTED,
+          title: 'New Requirement Submitted',
+          message: `"${requirement.title}" has been submitted for review.`,
+          entityType: 'Requirement',
+          entityId: requirement.id,
+          linkUrl: `/app/projects/${requirement.projectId}?tab=requirements&requirementId=${requirement.id}`,
+        }))
+      );
+    }
 
     await activityService.record({
       projectId: dto.projectId,
@@ -297,6 +315,18 @@ export const requirementService = {
       throw new AppError('NOT_FOUND', 'Requirement not found', 404);
     }
 
+    if (dto.toStatus === RequirementStatus.NEEDS_CLARIFICATION && (!dto.comment || !dto.comment.trim())) {
+      throw new AppError('BAD_REQUEST', 'Clarification message is required when requesting clarification', 400);
+    }
+
+    if (
+      req.status === RequirementStatus.NEEDS_CLARIFICATION &&
+      dto.toStatus === RequirementStatus.UNDER_REVIEW &&
+      (!dto.comment || !dto.comment.trim())
+    ) {
+      throw new AppError('BAD_REQUEST', 'Response message is required when responding to clarification', 400);
+    }
+
     const validation = validateTransition(
       req.status as RequirementStatus,
       dto.toStatus,
@@ -358,6 +388,20 @@ export const requirementService = {
     const pmUsers = req.project.members
       .filter((m) => m.membershipRole === 'PROJECT_MANAGER')
       .map((m) => m.user);
+
+    if (req.status === RequirementStatus.NEEDS_CLARIFICATION && dto.toStatus === RequirementStatus.UNDER_REVIEW) {
+      await notificationService.sendMany(
+        pmUsers.map((pm) => ({
+          userId: pm.id,
+          type: NotificationType.REQUIREMENT_SUBMITTED,
+          title: 'Clarification Responded',
+          message: `Client responded to clarification for "${req.title}".`,
+          entityType: 'Requirement',
+          entityId: requirementId,
+          linkUrl: `/app/projects/${req.projectId}?tab=requirements&requirementId=${requirementId}`,
+        }))
+      );
+    }
 
     if (dto.toStatus === RequirementStatus.SUBMITTED) {
       await notificationService.sendMany(

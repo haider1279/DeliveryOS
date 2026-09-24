@@ -115,6 +115,11 @@ export const ProjectWorkspace: React.FC = () => {
   const [estNotes, setEstNotes] = useState('');
   const [estDelivery, setEstDelivery] = useState('');
 
+  // Ask Clarification modal state
+  const [isAskClarificationOpen, setIsAskClarificationOpen] = useState(false);
+  const [clarificationReqId, setClarificationReqId] = useState<string | null>(null);
+  const [clarificationText, setClarificationText] = useState('');
+
   // Release modal state
   const [relSelectedReqs, setRelSelectedReqs] = useState<string[]>([]);
   const [relReleaseNotes, setRelReleaseNotes] = useState('');
@@ -380,6 +385,29 @@ export const ProjectWorkspace: React.FC = () => {
     }
   };
 
+  const openAskClarification = (reqId: string) => {
+    setClarificationReqId(reqId);
+    setClarificationText('');
+    setIsAskClarificationOpen(true);
+  };
+
+  const handleSendClarificationRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!clarificationReqId || !clarificationText.trim()) return;
+    try {
+      await handleRequirementTransition(
+        clarificationReqId,
+        RequirementStatus.NEEDS_CLARIFICATION,
+        clarificationText.trim()
+      );
+      setIsAskClarificationOpen(false);
+      setClarificationText('');
+      setClarificationReqId(null);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to send clarification request');
+    }
+  };
+
   const openEstimateModal = (reqId: string) => {
     setEstimateReqId(reqId);
     setIsEstimateModalOpen(true);
@@ -550,14 +578,12 @@ export const ProjectWorkspace: React.FC = () => {
 
     switch (req.status as RequirementStatus) {
       case RequirementStatus.DRAFT:
-        if (has(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER))
-          return [{ label: 'Submit for Review', onClick: () => handleRequirementTransition(req.id, RequirementStatus.SUBMITTED) }];
         return [];
       case RequirementStatus.SUBMITTED:
         if (canManage)
           return [
             trans(RequirementStatus.UNDER_REVIEW),
-            { label: 'Ask Clarification', onClick: () => handleRequirementTransition(req.id, RequirementStatus.NEEDS_CLARIFICATION) },
+            { label: 'Ask Clarification', onClick: () => openAskClarification(req.id) },
             { label: 'Cancel', onClick: () => handleRequirementTransition(req.id, RequirementStatus.CANCELLED) },
           ];
         return [];
@@ -565,7 +591,7 @@ export const ProjectWorkspace: React.FC = () => {
         if (canManage)
           return [
             trans(RequirementStatus.ESTIMATING),
-            { label: 'Ask Clarification', onClick: () => handleRequirementTransition(req.id, RequirementStatus.NEEDS_CLARIFICATION) },
+            { label: 'Ask Clarification', onClick: () => openAskClarification(req.id) },
             { label: 'Cancel', onClick: () => handleRequirementTransition(req.id, RequirementStatus.CANCELLED) },
           ];
         return [];
@@ -582,7 +608,7 @@ export const ProjectWorkspace: React.FC = () => {
       case RequirementStatus.WAITING_FOR_APPROVAL:
         if (canManage)
           return [
-            { label: 'Ask Clarification', onClick: () => handleRequirementTransition(req.id, RequirementStatus.NEEDS_CLARIFICATION) },
+            { label: 'Ask Clarification', onClick: () => openAskClarification(req.id) },
             { label: 'Cancel', onClick: () => handleRequirementTransition(req.id, RequirementStatus.CANCELLED) },
           ];
         return [];
@@ -1968,6 +1994,46 @@ export const ProjectWorkspace: React.FC = () => {
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold bg-brand-600 text-white"
             >
               <Wallet className="h-3.5 w-3.5" /> Record Payment
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Ask Clarification Modal */}
+      <Modal
+        isOpen={isAskClarificationOpen}
+        onClose={() => setIsAskClarificationOpen(false)}
+        title="Ask Clarification from Client"
+      >
+        <form onSubmit={handleSendClarificationRequest} className="space-y-4">
+          <p className="text-xs text-slate-600">
+            Specify what details or questions the client needs to answer before this requirement can proceed.
+          </p>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700">Clarification Question / Message</label>
+            <textarea
+              required
+              rows={4}
+              value={clarificationText}
+              onChange={(e) => setClarificationText(e.target.value)}
+              placeholder="Describe the clarification needed from the client..."
+              className="mt-1 w-full px-3 py-2 rounded-lg border text-xs focus:outline-none focus:border-brand-500"
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t">
+            <button
+              type="button"
+              onClick={() => setIsAskClarificationOpen(false)}
+              className="px-3 py-1.5 rounded text-xs text-slate-600 hover:bg-slate-100"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!clarificationText.trim()}
+              className="px-3.5 py-1.5 rounded text-xs font-semibold bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+            >
+              Send Clarification Request
             </button>
           </div>
         </form>

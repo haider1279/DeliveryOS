@@ -9,6 +9,7 @@ import {
   AlertCircle,
   Calendar,
   DollarSign,
+  HelpCircle,
 } from 'lucide-react';
 import { api } from '../../api/client';
 import { StatusBadge } from '../../components/ui/StatusBadge';
@@ -163,6 +164,15 @@ export const ClientProjectDetail: React.FC = () => {
                     >
                       Review & Approve Delivery
                     </button>
+                  )}
+
+                  {req.status === 'NEEDS_CLARIFICATION' && (
+                    <Link
+                      to={`/portal/requirements/${req.id}`}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200"
+                    >
+                      <HelpCircle className="h-3.5 w-3.5" /> Respond to Clarification
+                    </Link>
                   )}
 
                   {req.status === 'WAITING_FOR_APPROVAL' && (

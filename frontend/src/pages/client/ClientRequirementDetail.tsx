@@ -8,6 +8,8 @@ import {
   Calendar,
   DollarSign,
   FileText,
+  HelpCircle,
+  Send,
 } from 'lucide-react';
 import { api } from '../../api/client';
 import { StatusBadge } from '../../components/ui/StatusBadge';
@@ -27,6 +29,9 @@ export const ClientRequirementDetail: React.FC = () => {
   const [decision, setDecision] = useState<'APPROVED' | 'CHANGES_REQUESTED'>('APPROVED');
   const [comment, setComment] = useState('');
   const [isDecisionOpen, setIsDecisionOpen] = useState(false);
+
+  const [clientResponse, setClientResponse] = useState('');
+  const [submittingClarification, setSubmittingClarification] = useState(false);
 
   const fetchData = async () => {
     try {
@@ -70,6 +75,29 @@ export const ClientRequirementDetail: React.FC = () => {
   const openDecision = (d: 'APPROVED' | 'CHANGES_REQUESTED') => {
     setDecision(d);
     setIsDecisionOpen(true);
+  };
+
+  const latestClarification = [...(req?.statusHistory || [])]
+    .reverse()
+    .find((h: any) => h.toStatus === 'NEEDS_CLARIFICATION');
+
+  const handleSendClarificationResponse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!clientResponse.trim()) return;
+    setSubmittingClarification(true);
+    try {
+      await api.post(`/requirements/${id}/transition`, {
+        toStatus: 'UNDER_REVIEW',
+        comment: clientResponse.trim(),
+      });
+      toast.success('Clarification response submitted. Your requirement is now under review.');
+      setClientResponse('');
+      fetchData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to submit clarification response');
+    } finally {
+      setSubmittingClarification(false);
+    }
   };
 
   return (
@@ -124,6 +152,54 @@ export const ClientRequirementDetail: React.FC = () => {
           {req.acceptanceCriteria}
         </div>
       </div>
+
+      {/* Clarification Card */}
+      {req.status === 'NEEDS_CLARIFICATION' && (
+        <div className="bg-amber-50/90 border border-amber-200 p-6 rounded-2xl shadow-xs space-y-4">
+          <div className="flex items-center gap-2 text-amber-900 font-bold text-sm">
+            <HelpCircle className="h-5 w-5 text-amber-600 flex-shrink-0" />
+            <span>Clarification Requested by Agency</span>
+          </div>
+
+          <div className="bg-white p-4 rounded-xl border border-amber-100 space-y-1">
+            <p className="text-xs font-semibold text-slate-800">Agency PM Question:</p>
+            <p className="text-xs text-slate-700 leading-relaxed">
+              {latestClarification?.comment || 'The project manager requested additional information before proceeding.'}
+            </p>
+            {latestClarification?.createdAt && (
+              <span className="block text-[10px] text-slate-400 mt-1">
+                Requested on {new Date(latestClarification.createdAt).toLocaleString()}
+              </span>
+            )}
+          </div>
+
+          <form onSubmit={handleSendClarificationResponse} className="space-y-3">
+            <div>
+              <label className="block text-xs font-semibold text-amber-900 mb-1">
+                Your Answer / Clarification
+              </label>
+              <textarea
+                required
+                rows={3}
+                value={clientResponse}
+                onChange={(e) => setClientResponse(e.target.value)}
+                placeholder="Provide the requested details or answers here..."
+                className="w-full px-3 py-2 rounded-xl border border-amber-300 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+              />
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={submittingClarification || !clientResponse.trim()}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-amber-600 text-white hover:bg-amber-700 shadow-sm transition-colors disabled:opacity-50"
+              >
+                <Send className="h-3.5 w-3.5" />
+                {submittingClarification ? 'Submitting...' : 'Send Clarification'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Estimate card */}
       {sentEstimate ? (
