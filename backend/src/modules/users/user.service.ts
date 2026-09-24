@@ -13,6 +13,8 @@ import {
   AuthenticatedUser,
 } from '@deliveryos/shared';
 
+import { getSupabaseAdmin } from '../../services/supabase-admin.service';
+
 // Roles an ADMIN may invite. Role escalation beyond this is reserved for
 // SUPER_ADMIN (and SUPER_ADMIN itself can never be created via invite).
 // BD is included so ADMIN can onboard business-development staff without
@@ -157,18 +159,59 @@ export class UserService {
     // Build the one-time invitation URL the recipient needs to activate.
     const inviteUrl = `${config.frontendUrl}/accept-invite?email=${encodeURIComponent(user.email)}&token=${inviteToken}`;
 
-    // Deliver the invitation email. Production failures surface to the inviter
-    // (email is part of the invite contract); in dev/test the local mailbox
-    // delivers it, so a missing SMTP config never silently pretends.
-    try {
-      await emailService.sendInvitationEmail({
-        to: user.email,
-        firstName: input.firstName,
-        inviteUrl,
-      });
-    } catch (err) {
-      if (config.isProd) throw err;
-      console.error('[invite] failed to deliver invitation email (dev mode):', (err as Error).message);
+    // Deliver invitation email.
+    // In production (or whenever Supabase credentials are configured), use
+    // Supabase Auth's built-in invitation system (inviteUserByEmail).
+    const supabaseAdmin = getSupabaseAdmin();
+
+    if (supabaseAdmin) {
+      const { data: supabaseData, error: supabaseError } =
+        await supabaseAdmin.auth.admin.inviteUserByEmail(user.email, {
+          redirectTo: inviteUrl,
+          data: {
+            firstName: input.firstName,
+            lastName: input.lastName,
+            role: input.role,
+            organizationId: input.organizationId || null,
+          },
+        });
+
+      if (supabaseError) {
+        // Rollback Prisma user creation if Supabase Auth invitation fails
+        await prisma.user.delete({ where: { id: user.id } }).catch(() => {});
+        throw AppError.badRequest(`Failed to send invitation via Supabase Auth: ${supabaseError.message}`);
+      }
+
+      if (supabaseData?.user?.id) {
+        const updatedUser = await prisma.user.update({
+          where: { id: user.id },
+          data: { supabaseUserId: supabaseData.user.id },
+          include: {
+            profile: true,
+            organization: true,
+          },
+        });
+        return {
+          user: updatedUser,
+          inviteToken,
+          inviteUrl,
+          inviteTokenExpiresAt,
+        };
+      }
+    } else if (config.isProd) {
+      await prisma.user.delete({ where: { id: user.id } }).catch(() => {});
+      throw new AppError('INTERNAL_ERROR', 'Supabase Auth service-role key is missing or not configured for production', 500);
+    } else {
+      // Dev/test mode fallback when Supabase credentials are not set
+      try {
+        await emailService.sendInvitationEmail({
+          to: user.email,
+          firstName: input.firstName,
+          inviteUrl,
+        });
+      } catch (err) {
+        console.error('[invite] failed to deliver invitation email (dev mode):', (err as Error).message);
+      }
     }
 
     // Return the token exactly once — it is never persisted in plaintext.

@@ -8,6 +8,7 @@ import { config } from '../../src/config';
 import { authService } from '../../src/modules/auth/auth.service';
 import { emailService } from '../../src/services/email.service';
 import { auditService } from '../../src/services/audit.service';
+import * as supabaseAdminModule from '../../src/services/supabase-admin.service';
 import { UserRole, UserStatus, OrganizationQualificationStatus, ProjectStatus } from '@deliveryos/shared';
 
 /**
@@ -170,35 +171,37 @@ describe('DeliveryOS defect regressions (seeded database)', () => {
   }
 
   describe('BUG 1 — invitation email is actually dispatched', () => {
-    it('invite endpoint now delivers the invitation email to the recipient', async () => {
+    it('invite endpoint now delivers the invitation email via Supabase Auth when configured', async () => {
       const email = `invitemail-test-${suffix}@deliveryos.local`;
       createdEmails.push(email);
-      const spy = vi.spyOn(emailService, 'sendInvitationEmail').mockResolvedValueOnce({
-        transport: 'dev-mailbox',
+
+      const mockInviteUserByEmail = vi.fn().mockResolvedValue({
+        data: { user: { id: `sp_user_${suffix}` } },
+        error: null,
       });
+      const mockSupabase = {
+        auth: { admin: { inviteUserByEmail: mockInviteUserByEmail } },
+      } as any;
+
+      const spy = vi.spyOn(supabaseAdminModule, 'getSupabaseAdmin').mockReturnValue(mockSupabase);
 
       const res = await request(app)
         .post('/api/users/invite')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ email, firstName: 'Mail', lastName: 'Test', role: 'DEVELOPER' });
+
       expect(res.status).toBe(201);
       const inviteToken = res.body?.data?.inviteToken;
       expect(inviteToken).toMatch(/^[0-9a-f]{64}$/);
+      expect(mockInviteUserByEmail).toHaveBeenCalledOnce();
+      expect(mockInviteUserByEmail.mock.calls[0][0]).toBe(email);
+      expect(mockInviteUserByEmail.mock.calls[0][1].redirectTo).toContain('accept-invite');
 
-      expect(spy).toHaveBeenCalledOnce();
-      const arg = spy.mock.calls[0][0];
-      expect(arg.to).toBe(email);
-      expect(arg.firstName).toBe('Mail');
-      expect(arg.inviteUrl).toContain('accept-invite');
-      expect(arg.inviteUrl).toContain(inviteToken);
-      // Token must never be logged by the email layer.
-      if (process.env['SMTP_PASS']) {
-        expect(JSON.stringify(arg)).not.toContain(process.env['SMTP_PASS']);
-      }
       spy.mockRestore();
     });
 
-    it('finally writes a real message to the local dev mailbox when no SMTP is configured', async () => {
+    it('writes a real message to local dev mailbox when Supabase Auth is not configured in dev/test', async () => {
+      const spy = vi.spyOn(supabaseAdminModule, 'getSupabaseAdmin').mockReturnValue(null);
       const devMailDir = config.email.devMailDir;
       const filesBefore = new Set(fs.existsSync(devMailDir) ? fs.readdirSync(devMailDir) : []);
       const email = `invoicembox-test-${suffix}@deliveryos.local`;
@@ -208,16 +211,13 @@ describe('DeliveryOS defect regressions (seeded database)', () => {
         .post('/api/users/invite')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ email, firstName: 'Box', lastName: 'Mail', role: 'QA' });
+
       expect(res.status).toBe(201);
 
       const dirEntries = fs.existsSync(devMailDir) ? fs.readdirSync(devMailDir) : [];
       const created = dirEntries.filter((f) => !filesBefore.has(f));
       expect(created.length).toBeGreaterThan(0);
 
-      // Files in the shared dev-mailbox are written by multiple test files that
-      // vitest runs in parallel, so file ordering is not deterministic. Locate
-      // the specific message addressed to this recipient instead of assuming
-      // the first new file belongs to this test.
       const emlPath = created
         .map((f) => path.join(devMailDir, f))
         .find((p) => fs.readFileSync(p, 'utf8').includes(`To: ${email}`));
@@ -227,6 +227,8 @@ describe('DeliveryOS defect regressions (seeded database)', () => {
       expect(eml).toContain(`To: ${email}`);
       expect(eml).toContain('accept-invite');
       expect(eml).toContain(res.body?.data?.inviteToken);
+
+      spy.mockRestore();
     });
 
     it('production refuses to deliver silently when SMTP is not configured', async () => {

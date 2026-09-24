@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import request from 'supertest';
 import { app } from '../../src/app';
 import { prisma } from '../../src/config/prisma';
 import { authService } from '../../src/modules/auth/auth.service';
+import * as supabaseAdminModule from '../../src/services/supabase-admin.service';
 import { OrganizationQualificationStatus, ProjectStatus, InvoiceStatus } from '@deliveryos/shared';
 
 /**
@@ -72,6 +73,18 @@ describe('Invite-token flow and payment guard (seeded database)', () => {
 
     pmToken = authService.createDevToken({ id: pmUser.id, email: pmUser.email, role: pmUser.role });
     adminToken = authService.createDevToken({ id: adminUser.id, email: adminUser.email, role: adminUser.role });
+
+    vi.spyOn(supabaseAdminModule, 'getSupabaseAdmin').mockReturnValue({
+      auth: {
+        admin: {
+          inviteUserByEmail: vi.fn().mockImplementation(async (_email, _options) => ({
+            data: { user: { id: `sp_user_${Date.now()}` } },
+            error: null,
+          })),
+          updateUserById: vi.fn().mockResolvedValue({ data: { user: {} }, error: null }),
+        },
+      },
+    } as any);
   });
 
   afterAll(async () => {

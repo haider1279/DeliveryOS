@@ -5,6 +5,7 @@ import { prisma } from '../../config/prisma';
 import { config } from '../../config';
 import { AppError } from '../../errors/AppError';
 import { auditService } from '../../services/audit.service';
+import { getSupabaseAdmin } from '../../services/supabase-admin.service';
 import { UserRole, UserStatus } from '@deliveryos/shared';
 
 export class AuthService {
@@ -145,6 +146,20 @@ export class AuthService {
       },
       include: { profile: true, organization: true },
     });
+
+    if (user.supabaseUserId) {
+      const supabaseAdmin = getSupabaseAdmin();
+      if (supabaseAdmin) {
+        try {
+          await supabaseAdmin.auth.admin.updateUserById(user.supabaseUserId, {
+            password: input.password,
+            email_confirm: true,
+          });
+        } catch (err) {
+          console.error('[completeInvite] failed to sync password to Supabase Auth:', (err as Error).message);
+        }
+      }
+    }
 
     await auditService.log({
       actorId: updatedUser.id,
