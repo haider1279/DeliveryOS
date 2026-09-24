@@ -68,14 +68,6 @@ export const projectController = {
     } catch (err) { next(err); }
   },
 
-  async getEligibleDevelopers(req: Request, res: Response, next: NextFunction) {
-    try {
-      const id = String(req.params.id);
-      const developers = await projectService.getEligibleDevelopers(req.user!, id);
-      sendSuccess(res, { data: developers });
-    } catch (err) { next(err); }
-  },
-
   async removeMember(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);

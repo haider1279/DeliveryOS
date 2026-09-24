@@ -68,7 +68,6 @@ export const ProjectWorkspace: React.FC = () => {
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
-  const [isAssignDevModalOpen, setIsAssignDevModalOpen] = useState(false);
 
   const [availableUsers, setAvailableUsers] = useState<any[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -76,12 +75,6 @@ export const ProjectWorkspace: React.FC = () => {
   const [selectedMembershipRole, setSelectedMembershipRole] = useState('DEVELOPER');
   const [submittingMember, setSubmittingMember] = useState(false);
   const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
-
-  const [eligibleDevelopers, setEligibleDevelopers] = useState<any[]>([]);
-  const [loadingEligibleDevs, setLoadingEligibleDevs] = useState(false);
-  const [selectedDevId, setSelectedDevId] = useState('');
-  const [submittingDev, setSubmittingDev] = useState(false);
-  const [removingDevId, setRemovingDevId] = useState<string | null>(null);
 
   // Selected item states
   const [selectedReq, setSelectedReq] = useState<any>(null);
@@ -257,61 +250,6 @@ export const ProjectWorkspace: React.FC = () => {
     }
   };
 
-  const fetchEligibleDevelopers = async () => {
-    setLoadingEligibleDevs(true);
-    try {
-      const res: any = await api.get(`/projects/${id}/eligible-developers`);
-      const devs = Array.isArray(res) ? res : (res?.data || []);
-      setEligibleDevelopers(devs.filter((d: any) => d.role === UserRole.DEVELOPER));
-    } catch (err) {
-      console.error('Failed to fetch eligible developers', err);
-      toast.error('Failed to load eligible developers list');
-    } finally {
-      setLoadingEligibleDevs(false);
-    }
-  };
-
-  const handleAssignDeveloper = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedDevId) {
-      toast.error('Please select a developer to assign');
-      return;
-    }
-    setSubmittingDev(true);
-    try {
-      await api.post(`/projects/${id}/members`, {
-        userId: selectedDevId,
-        membershipRole: 'DEVELOPER',
-      });
-      toast.success('Developer assigned to project successfully');
-      setSelectedDevId('');
-      fetchProjectData();
-      fetchEligibleDevelopers();
-    } catch (err: any) {
-      toast.error(err?.message || 'Failed to assign developer');
-    } finally {
-      setSubmittingDev(false);
-    }
-  };
-
-  const handleRemoveDeveloper = async (userId: string) => {
-    setRemovingDevId(userId);
-    try {
-      const res: any = await api.delete(`/projects/${id}/members/${userId}`);
-      if (res?.openTasksNeedingReassignment?.length > 0) {
-        toast.success(`Developer removed. ${res.openTasksNeedingReassignment.length} active task(s) now need reassignment.`);
-      } else {
-        toast.success('Developer removed from project');
-      }
-      fetchProjectData();
-      fetchEligibleDevelopers();
-    } catch (err: any) {
-      toast.error(err?.message || 'Failed to remove developer');
-    } finally {
-      setRemovingDevId(null);
-    }
-  };
-
   useEffect(() => {
     fetchProjectData();
   }, [id]);
@@ -358,11 +296,6 @@ export const ProjectWorkspace: React.FC = () => {
     user?.role === UserRole.SUPER_ADMIN ||
     user?.role === UserRole.ADMIN ||
     user?.role === UserRole.PROJECT_MANAGER;
-
-  const isProjectApprovedInternalStage =
-    project?.status && !['ARCHIVED', 'CANCELLED'].includes(project.status);
-
-  const canAssignDevelopers = canManage && isProjectApprovedInternalStage;
 
   const canViewFinance = canManage;
 
@@ -890,47 +823,6 @@ export const ProjectWorkspace: React.FC = () => {
 
           {/* Sidebar Info */}
           <div className="space-y-6">
-            <div className="bg-white p-6 rounded-2xl border border-slate-200/80 space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                  Assigned Developers
-                </h3>
-                {canAssignDevelopers && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      fetchEligibleDevelopers();
-                      setIsAssignDevModalOpen(true);
-                    }}
-                    className="text-xs font-semibold text-brand-600 hover:text-brand-700 hover:underline flex items-center gap-1"
-                  >
-                    + Assign Developers
-                  </button>
-                )}
-              </div>
-              <div className="space-y-3">
-                {(!project.members || project.members.filter((m: any) => !m.leftAt && (m.membershipRole === 'DEVELOPER' || m.user?.role === 'DEVELOPER')).length === 0) ? (
-                  <p className="text-xs text-slate-400 italic">No developers assigned to this project yet.</p>
-                ) : (
-                  project.members.filter((m: any) => !m.leftAt && (m.membershipRole === 'DEVELOPER' || m.user?.role === 'DEVELOPER')).map((m: any) => (
-                    <div key={m.id} className="flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-50 text-brand-700 text-xs font-bold border border-brand-200">
-                          {m.user?.profile?.firstName?.[0] || 'D'}
-                        </div>
-                        <div>
-                          <p className="text-xs font-semibold text-slate-900">
-                            {m.user?.profile?.displayName || m.user?.email}
-                          </p>
-                          <p className="text-[10px] text-slate-500">Developer</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
             <div className="bg-white p-6 rounded-2xl border border-slate-200/80 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
@@ -1662,16 +1554,16 @@ export const ProjectWorkspace: React.FC = () => {
                         </option>
                       ))}
                     </select>
-                    {eligibleAssignees.length === 0 && canAssignDevelopers && (
+                    {eligibleAssignees.length === 0 && canManage && (
                       <button
                         type="button"
                         onClick={() => {
-                          fetchEligibleDevelopers();
-                          setIsAssignDevModalOpen(true);
+                          fetchAvailableUsers();
+                          setIsTeamModalOpen(true);
                         }}
                         className="mt-1.5 text-[11px] font-semibold text-brand-600 hover:text-brand-700 hover:underline flex items-center gap-1"
                       >
-                        + Assign developers to project
+                        + Add developers to project
                       </button>
                     )}
                   </div>
@@ -2238,96 +2130,6 @@ export const ProjectWorkspace: React.FC = () => {
           </div>
         </form>
       </Modal>
-      {/* Assign Developers Modal */}
-      <Modal
-        isOpen={isAssignDevModalOpen}
-        onClose={() => setIsAssignDevModalOpen(false)}
-        title="Assign Developers to Project"
-      >
-        <div className="space-y-6">
-          {/* Currently Assigned Developers */}
-          <div className="space-y-3">
-            <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-              Currently Assigned Developers ({project?.members?.filter((m: any) => !m.leftAt && (m.membershipRole === 'DEVELOPER' || m.user?.role === 'DEVELOPER')).length || 0})
-            </h4>
-            {(!project?.members || project.members.filter((m: any) => !m.leftAt && (m.membershipRole === 'DEVELOPER' || m.user?.role === 'DEVELOPER')).length === 0) ? (
-              <p className="text-xs text-slate-500 italic">No developers assigned to this project yet.</p>
-            ) : (
-              <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden">
-                {project.members.filter((m: any) => !m.leftAt && (m.membershipRole === 'DEVELOPER' || m.user?.role === 'DEVELOPER')).map((m: any) => (
-                  <div key={m.id} className="flex items-center justify-between p-3 bg-white hover:bg-slate-50">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-50 text-brand-700 text-xs font-bold border border-brand-200">
-                        {m.user?.profile?.firstName?.[0] || 'D'}
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold text-slate-900">
-                          {m.user?.profile?.displayName || m.user?.email}
-                        </p>
-                        <p className="text-[10px] text-slate-500">Developer</p>
-                      </div>
-                    </div>
-                    {canAssignDevelopers && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveDeveloper(m.user?.id || m.userId)}
-                        disabled={removingDevId === (m.user?.id || m.userId)}
-                        className="px-2.5 py-1 rounded text-[11px] font-semibold text-rose-600 hover:bg-rose-50 border border-rose-200 transition-colors disabled:opacity-50"
-                      >
-                        {removingDevId === (m.user?.id || m.userId) ? 'Removing...' : 'Remove Developer'}
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Assign Eligible Developer Form */}
-          {canAssignDevelopers && (
-            <div className="pt-4 border-t border-slate-200 space-y-3">
-              <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                Assign Eligible Developer
-              </h4>
-              <form onSubmit={handleAssignDeveloper} className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700">Select Developer</label>
-                  {loadingEligibleDevs ? (
-                    <p className="text-xs text-slate-500 py-2">Loading eligible developers...</p>
-                  ) : eligibleDevelopers.length === 0 ? (
-                    <p className="text-xs text-slate-500 py-2 italic">No unassigned developers available for assignment.</p>
-                  ) : (
-                    <select
-                      value={selectedDevId}
-                      onChange={(e) => setSelectedDevId(e.target.value)}
-                      required
-                      className="mt-1 w-full px-3 py-2 rounded-lg border text-xs bg-white focus:outline-none focus:border-brand-500"
-                    >
-                      <option value="">-- Choose a developer --</option>
-                      {eligibleDevelopers.map((d: any) => (
-                        <option key={d.id} value={d.id}>
-                          {d.profile?.displayName || d.email}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-
-                <div className="flex justify-end pt-2">
-                  <button
-                    type="submit"
-                    disabled={submittingDev || !selectedDevId}
-                    className="px-4 py-2 rounded-lg text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 transition-colors"
-                  >
-                    {submittingDev ? 'Assigning...' : 'Assign Developer'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          )}
-        </div>
-      </Modal>
-
       {/* Manage Team Modal */}
       <Modal
         isOpen={isTeamModalOpen}

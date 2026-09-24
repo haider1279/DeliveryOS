@@ -21,7 +21,6 @@ router.patch('/:id', requireProjectAccess(), validate(UpdateProjectSchema), proj
 router.delete('/:id', requireProjectAccess(), projectController.remove);
 router.get('/:id/health', requireProjectAccess(), projectController.health);
 router.get('/:id/activity', requireProjectAccess(), validate(PaginationQuerySchema, 'query'), projectController.getActivity);
-router.get('/:id/eligible-developers', requireProjectAccess(), projectController.getEligibleDevelopers);
 router.post('/:id/members', requireProjectAccess(), validate(AddProjectMemberSchema), projectController.addMember);
 router.delete('/:id/members/:userId', requireProjectAccess(), projectController.removeMember);
 
