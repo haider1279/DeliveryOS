@@ -3,6 +3,7 @@ import { AppError } from '../../errors/AppError';
 import { auditService } from '../../services/audit.service';
 import { notificationService, activityService } from '../../services/notification.service';
 import { requireProjectAccess, getAccessibleProjectIds } from '../../services/project-access.service';
+import { syncProjectStatus } from '../projects/project.service';
 import {
   UserRole,
   ReleaseStatus,
@@ -214,30 +215,7 @@ export class ReleaseService {
         });
       }
 
-      const unpaidInvoicesCount = await prisma.invoice.count({
-        where: {
-          projectId: release.projectId,
-          status: { notIn: [InvoiceStatus.PAID, InvoiceStatus.VOID] },
-          deletedAt: null,
-        },
-      });
-
-      const proj = await prisma.project.findUnique({
-        where: { id: release.projectId },
-        select: { status: true },
-      });
-
-      if (unpaidInvoicesCount === 0 && proj?.status !== ProjectStatus.COMPLETED) {
-        await prisma.project.update({
-          where: { id: release.projectId },
-          data: { status: ProjectStatus.COMPLETED, completedAt: new Date() },
-        });
-      } else if (proj?.status === ProjectStatus.PLANNING) {
-        await prisma.project.update({
-          where: { id: release.projectId },
-          data: { status: ProjectStatus.ACTIVE },
-        });
-      }
+      await syncProjectStatus(release.projectId);
     }
 
     return updatedRelease;

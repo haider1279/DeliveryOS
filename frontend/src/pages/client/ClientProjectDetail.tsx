@@ -173,13 +173,12 @@ export const ClientProjectDetail: React.FC = () => {
             <span className="font-mono text-xs font-bold text-slate-500">
               {project.code}
             </span>
-            {isDeployed ? (
+            <StatusBadge status={project.status} />
+            {project.status === 'COMPLETED' && (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                 <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
                 Live in Production
               </span>
-            ) : (
-              <StatusBadge status={project.status} />
             )}
           </div>
           <h1 className="text-2xl font-black tracking-tight text-slate-900">{project.name}</h1>

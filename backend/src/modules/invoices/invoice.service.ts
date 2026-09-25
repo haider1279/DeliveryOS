@@ -3,6 +3,7 @@ import { AppError } from '../../errors/AppError';
 import { auditService } from '../../services/audit.service';
 import { notificationService, activityService } from '../../services/notification.service';
 import { requireProjectAccess, getAccessibleProjectIds, assertProjectWritable } from '../../services/project-access.service';
+import { syncProjectStatus } from '../projects/project.service';
 import {
   UserRole,
   InvoiceStatus,
@@ -247,55 +248,7 @@ export class InvoiceService {
         include: { payments: true, items: true },
       });
 
-      if (newStatus === InvoiceStatus.PAID) {
-        const unpaidInvoicesCount = await tx.invoice.count({
-          where: {
-            projectId: invoice.projectId,
-            id: { not: input.invoiceId },
-            status: { notIn: [InvoiceStatus.PAID, InvoiceStatus.VOID] },
-            deletedAt: null,
-          },
-        });
-        if (unpaidInvoicesCount === 0) {
-          const deployedReleaseCount = await tx.release.count({
-            where: { projectId: invoice.projectId, status: 'DEPLOYED', deletedAt: null },
-          });
-          const totalReqs = await tx.requirement.count({
-            where: { projectId: invoice.projectId, deletedAt: null },
-          });
-          const completedReqs = await tx.requirement.count({
-            where: {
-              projectId: invoice.projectId,
-              status: { in: ['COMPLETED', 'APPROVED'] },
-              deletedAt: null,
-            },
-          });
-
-          const isDeployedOrScopeFinished =
-            deployedReleaseCount > 0 || (totalReqs > 0 && totalReqs === completedReqs);
-
-          if (isDeployedOrScopeFinished) {
-            await tx.project.update({
-              where: { id: invoice.projectId },
-              data: {
-                status: ProjectStatus.COMPLETED,
-                completedAt: new Date(),
-              },
-            });
-          } else {
-            const proj = await tx.project.findUnique({
-              where: { id: invoice.projectId },
-              select: { status: true },
-            });
-            if (proj?.status === ProjectStatus.PLANNING) {
-              await tx.project.update({
-                where: { id: invoice.projectId },
-                data: { status: ProjectStatus.ACTIVE },
-              });
-            }
-          }
-        }
-      }
+      await syncProjectStatus(invoice.projectId, tx);
 
       return { payment, invoice: updatedInvoice, totalPaid, remaining: Math.max(0, lockedTotal - totalPaid) };
     });

@@ -2,9 +2,67 @@ import { prisma } from '../../config/prisma';
 import { AppError } from '../../errors/AppError';
 import { auditService } from '../../services/audit.service';
 import { activityService } from '../../services/notification.service';
-import { UserRole, UserStatus, CommentVisibility, ProjectStatus, OrganizationQualificationStatus } from '@deliveryos/shared';
+import { UserRole, UserStatus, CommentVisibility, ProjectStatus, InvoiceStatus, OrganizationQualificationStatus } from '@deliveryos/shared';
 import type { CreateProjectDTO, UpdateProjectDTO, AddProjectMemberDTO, AuthenticatedUser } from '@deliveryos/shared';
 import { requireProjectAccess, getAccessibleProjectIds, assertProjectWritable } from '../../services/project-access.service';
+
+export async function syncProjectStatus(projectId: string, db: any = prisma): Promise<ProjectStatus | null> {
+  const project = await db.project.findUnique({
+    where: { id: projectId },
+    select: { id: true, status: true, deletedAt: true },
+  });
+
+  if (!project || project.deletedAt || project.status === ProjectStatus.CANCELLED || project.status === ProjectStatus.ARCHIVED) {
+    return project?.status || null;
+  }
+
+  // Check deployment status
+  const deployedReleaseCount = await db.release.count({
+    where: { projectId, status: 'DEPLOYED', deletedAt: null },
+  });
+
+  const totalReqs = await db.requirement.count({
+    where: { projectId, deletedAt: null },
+  });
+
+  const completedReqs = await db.requirement.count({
+    where: { projectId, status: { in: ['COMPLETED', 'APPROVED'] }, deletedAt: null },
+  });
+
+  const isDeployedOrScopeFinished =
+    deployedReleaseCount > 0 || (totalReqs > 0 && totalReqs === completedReqs);
+
+  // Check invoice / payment status
+  const totalInvoicesCount = await db.invoice.count({
+    where: { projectId, status: { not: InvoiceStatus.VOID }, deletedAt: null },
+  });
+
+  const unpaidInvoicesCount = await db.invoice.count({
+    where: { projectId, status: { notIn: [InvoiceStatus.PAID, InvoiceStatus.VOID] }, deletedAt: null },
+  });
+
+  const isPaymentConfirmed = totalInvoicesCount > 0 && unpaidInvoicesCount === 0;
+
+  let targetStatus = project.status;
+
+  if (isDeployedOrScopeFinished && isPaymentConfirmed) {
+    targetStatus = ProjectStatus.COMPLETED;
+  } else if (project.status === ProjectStatus.PLANNING && totalInvoicesCount > 0) {
+    targetStatus = ProjectStatus.ACTIVE;
+  }
+
+  if (targetStatus !== project.status) {
+    await db.project.update({
+      where: { id: projectId },
+      data: {
+        status: targetStatus,
+        ...(targetStatus === ProjectStatus.COMPLETED ? { completedAt: new Date() } : {}),
+      },
+    });
+  }
+
+  return targetStatus;
+}
 
 export const projectService = {
   async create(actor: AuthenticatedUser, dto: CreateProjectDTO) {
@@ -125,6 +183,8 @@ export const projectService = {
   async getById(actor: AuthenticatedUser, projectId: string) {
     await requireProjectAccess(actor, projectId);
 
+    await syncProjectStatus(projectId);
+
     const project = await prisma.project.findFirst({
       where: { id: projectId, deletedAt: null },
       include: {
@@ -212,6 +272,13 @@ export const projectService = {
         take: query.pageSize,
       }),
     ]);
+
+    await Promise.all(
+      items.map(async (p) => {
+        const syncedStatus = await syncProjectStatus(p.id);
+        if (syncedStatus) p.status = syncedStatus;
+      })
+    );
 
     return { items, total };
   },
