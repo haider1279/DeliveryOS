@@ -576,15 +576,20 @@ export const ProjectWorkspace: React.FC = () => {
     e.preventDefault();
     if (!selectedInvoice) return;
     try {
+      const parsedAmount = parseFloat(payAmount);
+      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+        toast.error('Please enter a valid payment amount greater than zero');
+        return;
+      }
       await api.post(`/invoices/${selectedInvoice.id}/payments`, {
         invoiceId: selectedInvoice.id,
-        amount: parseFloat(payAmount) || 0,
+        amount: parsedAmount,
         paymentDate: new Date().toISOString(),
         method: payMethod,
         reference: payReference || undefined,
       });
       setIsPaymentModalOpen(false);
-      setPayAmount('0');
+      setPayAmount('');
       setPayReference('');
       toast.success('Payment recorded');
       fetchTabData();
@@ -1428,7 +1433,7 @@ export const ProjectWorkspace: React.FC = () => {
                         <button
                           onClick={() => {
                             setSelectedInvoice(inv);
-                            setPayAmount('0');
+                            setPayAmount('');
                             setIsPaymentModalOpen(true);
                           }}
                           className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
@@ -1962,7 +1967,9 @@ export const ProjectWorkspace: React.FC = () => {
             <input
               type="number"
               min="0.01"
+              step="0.01"
               required
+              placeholder="e.g. 500.00"
               value={payAmount}
               onChange={(e) => setPayAmount(e.target.value)}
               className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
