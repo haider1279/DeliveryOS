@@ -293,12 +293,6 @@ export const projectService = {
     const project = await prisma.project.findFirst({ where: { id: projectId, deletedAt: null } });
     if (!project) throw new AppError('NOT_FOUND', 'Project not found', 404);
 
-    if (dto.projectManagerId && dto.projectManagerId !== project.projectManagerId) {
-      if (actor.role !== UserRole.SUPER_ADMIN && actor.role !== UserRole.ADMIN) {
-        throw new AppError('FORBIDDEN', 'Only administrators can reassign the Project Manager', 403);
-      }
-    }
-
     if (dto.status === ProjectStatus.CANCELLED || dto.status === ProjectStatus.ARCHIVED) {
       await auditService.log({
         actorId: actor.id,
