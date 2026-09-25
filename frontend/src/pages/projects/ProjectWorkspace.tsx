@@ -592,7 +592,7 @@ export const ProjectWorkspace: React.FC = () => {
       setPayAmount('');
       setPayReference('');
       toast.success('Payment recorded');
-      fetchTabData();
+      await Promise.all([fetchTabData(), fetchProjectData()]);
     } catch (err: any) {
       toast.error(err.message || 'Failed to record payment');
     }

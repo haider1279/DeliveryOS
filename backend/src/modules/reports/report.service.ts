@@ -28,7 +28,7 @@ export class ReportService {
       invoices,
     ] = await Promise.all([
       prisma.project.findMany({
-        where: { status: 'ACTIVE', deletedAt: null, ...(accessibleProjectIds !== null ? { id: { in: accessibleProjectIds } } : {}) },
+        where: { status: { notIn: ['COMPLETED', 'CANCELLED', 'ARCHIVED'] }, deletedAt: null, ...(accessibleProjectIds !== null ? { id: { in: accessibleProjectIds } } : {}) },
         select: { id: true },
       }),
       prisma.task.count({

@@ -6,6 +6,7 @@ import { requireProjectAccess, getAccessibleProjectIds, assertProjectWritable } 
 import {
   UserRole,
   InvoiceStatus,
+  ProjectStatus,
   CommentVisibility,
   NotificationType,
   AuthenticatedUser,
@@ -245,6 +246,26 @@ export class InvoiceService {
         data: { status: newStatus },
         include: { payments: true, items: true },
       });
+
+      if (newStatus === InvoiceStatus.PAID) {
+        const unpaidInvoicesCount = await tx.invoice.count({
+          where: {
+            projectId: invoice.projectId,
+            id: { not: input.invoiceId },
+            status: { notIn: [InvoiceStatus.PAID, InvoiceStatus.VOID] },
+            deletedAt: null,
+          },
+        });
+        if (unpaidInvoicesCount === 0) {
+          await tx.project.update({
+            where: { id: invoice.projectId },
+            data: {
+              status: ProjectStatus.COMPLETED,
+              completedAt: new Date(),
+            },
+          });
+        }
+      }
 
       return { payment, invoice: updatedInvoice, totalPaid, remaining: Math.max(0, lockedTotal - totalPaid) };
     });

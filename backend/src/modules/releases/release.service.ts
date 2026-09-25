@@ -7,6 +7,7 @@ import {
   UserRole,
   ReleaseStatus,
   ProjectStatus,
+  InvoiceStatus,
   ClientReviewDecision,
   RequirementStatus,
   CommentVisibility,
@@ -191,7 +192,7 @@ export class ReleaseService {
       entityId: release.id,
     });
 
-    // If deployed, notify all client users belonging to the project's organization!
+    // If deployed, notify all client users belonging to the project's organization & update project status!
     if (isNowDeployed) {
       const clientUsers = await prisma.user.findMany({
         where: {
@@ -210,6 +211,31 @@ export class ReleaseService {
           entityType: 'Release',
           entityId: release.id,
           linkUrl: `/portal/projects/${release.projectId}?tab=releases`,
+        });
+      }
+
+      const unpaidInvoicesCount = await prisma.invoice.count({
+        where: {
+          projectId: release.projectId,
+          status: { notIn: [InvoiceStatus.PAID, InvoiceStatus.VOID] },
+          deletedAt: null,
+        },
+      });
+
+      const proj = await prisma.project.findUnique({
+        where: { id: release.projectId },
+        select: { status: true },
+      });
+
+      if (unpaidInvoicesCount === 0 && proj?.status !== ProjectStatus.COMPLETED) {
+        await prisma.project.update({
+          where: { id: release.projectId },
+          data: { status: ProjectStatus.COMPLETED, completedAt: new Date() },
+        });
+      } else if (proj?.status === ProjectStatus.PLANNING) {
+        await prisma.project.update({
+          where: { id: release.projectId },
+          data: { status: ProjectStatus.ACTIVE },
         });
       }
     }
