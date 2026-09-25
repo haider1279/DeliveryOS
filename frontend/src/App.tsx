@@ -10,7 +10,6 @@ import { AcceptInvite } from './pages/auth/AcceptInvite';
 import { InternalDashboard } from './pages/dashboard/InternalDashboard';
 import { ProjectList } from './pages/projects/ProjectList';
 import { ProjectWorkspace } from './pages/projects/ProjectWorkspace';
-import { MyWork } from './pages/dev/MyWork';
 import { QaWorkspace } from './pages/qa/QaWorkspace';
 import { InvoiceList } from './pages/finance/InvoiceList';
 import { ReportsDashboard } from './pages/reports/ReportsDashboard';
@@ -19,6 +18,7 @@ import { AuditLogs } from './pages/admin/AuditLogs';
 import { ProjectRequests } from './pages/admin/ProjectRequests';
 import { BDLeads } from './pages/bd/BDLeads';
 import { ClientProjects } from './pages/client/ClientProjects';
+import { ClientDashboard } from './pages/client/ClientDashboard';
 import { ClientProjectDetail } from './pages/client/ClientProjectDetail';
 import { ClientRequirementDetail } from './pages/client/ClientRequirementDetail';
 import { ClientInvoices } from './pages/client/ClientInvoices';
@@ -45,7 +45,7 @@ const ProtectedRoute: React.FC<{
   if (allowedRoles && !allowedRoles.includes(user.role)) {
     // If client tries to access internal layout, redirect to portal
     if (user.role === UserRole.CLIENT) {
-      return <Navigate to="/portal/projects" replace />;
+      return <Navigate to="/portal/dashboard" replace />;
     }
     return <Navigate to="/app/dashboard" replace />;
   }
@@ -66,7 +66,7 @@ const RootRedirect: React.FC = () => {
   }
 
   if (user.role === UserRole.CLIENT) {
-    return <Navigate to="/portal/projects" replace />;
+    return <Navigate to="/portal/dashboard" replace />;
   }
 
   return <Navigate to="/app/dashboard" replace />;
@@ -198,7 +198,8 @@ export const App: React.FC = () => {
                   </ProtectedRoute>
                 }
               >
-                <Route index element={<Navigate to="/portal/projects" replace />} />
+                <Route index element={<Navigate to="/portal/dashboard" replace />} />
+                <Route path="dashboard" element={<ClientDashboard />} />
                 <Route path="projects" element={<ClientProjects />} />
                 <Route path="projects/:id" element={<ClientProjectDetail />} />
                 <Route path="requirements/:id" element={<ClientRequirementDetail />} />

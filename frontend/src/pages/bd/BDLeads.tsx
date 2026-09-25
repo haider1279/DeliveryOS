@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Plus,
   Search,
@@ -151,9 +151,11 @@ export const BDLeads: React.FC = () => {
   const canApprove = [UserRole.SUPER_ADMIN, UserRole.ADMIN].includes(user?.role as UserRole);
   const canReject = [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.BD].includes(user?.role as UserRole);
 
+  const toastError = useToast().error;
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const hasLoaded = useRef(false);
 
   // Create prospect form
   const [createOpen, setCreateOpen] = useState(false);
@@ -173,18 +175,19 @@ export const BDLeads: React.FC = () => {
   const [qualifyNotes, setQualifyNotes] = useState('');
   const [qualifying, setQualifying] = useState(false);
 
-  const fetchOrgs = useCallback(async () => {
+  const fetchOrgs = useCallback(async (showLoading = false) => {
+    if (showLoading || !hasLoaded.current) setLoading(true);
     try {
-      setLoading(true);
       const res = await api.get<any>('/organizations', { pageSize: 100, search: search || undefined });
       const orgList = Array.isArray(res) ? res : res?.orgs || res?.data || [];
       setOrgs(orgList);
+      hasLoaded.current = true;
     } catch (err: any) {
-      toast.error(err.message || 'Failed to load organizations');
+      toastError(err.message || 'Failed to load organizations');
     } finally {
       setLoading(false);
     }
-  }, [search]);
+  }, [search, toastError]);
 
   useEffect(() => {
     const t = setTimeout(fetchOrgs, search ? 350 : 0);
@@ -209,7 +212,7 @@ export const BDLeads: React.FC = () => {
       toast.success(`Prospect "${form.name}" added to the pipeline.`);
       setCreateOpen(false);
       setForm({ name: '', slug: '', contactEmail: '', contactPhone: '', city: '', country: '', notes: '' });
-      fetchOrgs();
+      fetchOrgs(false);
     } catch (err: any) {
       toast.error(err.message || 'Failed to create prospect');
     } finally {
@@ -236,7 +239,7 @@ export const BDLeads: React.FC = () => {
           : `${qualifyTarget.org.name} marked as rejected.`
       );
       setQualifyTarget(null);
-      fetchOrgs();
+      fetchOrgs(false);
     } catch (err: any) {
       toast.error(err.message || 'Qualification update failed');
     } finally {

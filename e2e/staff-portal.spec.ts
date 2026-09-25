@@ -9,11 +9,11 @@ async function login(page: import('@playwright/test').Page, email: string, pass:
 }
 
 test.describe('Staff portal coverage', () => {
-  test('developer sees My Work and Projects navigation', async ({ page }) => {
+  test('developer sees assigned work on the dashboard and Projects navigation', async ({ page }) => {
     await login(page, 'haider7.euroshub@gmail.com', 'Developer#2026!DeliveryOS');
 
-    await page.getByRole('link', { name: /^My Work$/i }).click();
-    await expect(page).toHaveURL(/\/app\/my-work/);
+    await expect(page.getByRole('heading', { name: /My Assigned Work/i })).toBeVisible();
+    await expect(page.getByRole('link', { name: /^My Work$/i })).not.toBeVisible();
 
     await page.getByRole('link', { name: /^Projects$/i }).click();
     await expect(page).toHaveURL(/\/app\/projects/);

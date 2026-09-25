@@ -65,7 +65,7 @@ const StatusBadge: React.FC<{ status: ProjectRequestStatus }> = ({ status }) => 
 
 export const ProjectRequests: React.FC = () => {
   const { user } = useAuth();
-  const toast = useToast();
+  const { success: toastSuccess, error: toastError } = useToast();
 
   const [requests, setRequests] = useState<ProjectRequestItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,8 +84,8 @@ export const ProjectRequests: React.FC = () => {
 
   const canManage = user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.ADMIN;
 
-  const fetchRequests = useCallback(async () => {
-    setLoading(true);
+  const fetchRequests = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     try {
       const queryStatus = activeTab === 'ALL' ? undefined : activeTab;
       const res = await api.get<{ data: ProjectRequestItem[] }>('/projects/requests', {
@@ -95,11 +95,11 @@ export const ProjectRequests: React.FC = () => {
       const items = Array.isArray(res) ? res : (res as any).data || [];
       setRequests(items);
     } catch (err: any) {
-      toast.error(err.message || 'Failed to load project requests');
+      toastError(err.message || 'Failed to load project requests');
     } finally {
       setLoading(false);
     }
-  }, [activeTab, toast]);
+  }, [activeTab, toastError]);
 
   useEffect(() => {
     fetchRequests();
@@ -114,7 +114,7 @@ export const ProjectRequests: React.FC = () => {
         notes: decisionNotes ? decisionNotes.trim() : undefined,
       });
 
-      toast.success(
+      toastSuccess(
         confirmModal.decision === 'APPROVED'
           ? 'Project request approved successfully'
           : 'Project request rejected'
@@ -123,9 +123,9 @@ export const ProjectRequests: React.FC = () => {
       setConfirmModal(null);
       setShowDetailModal(false);
       setDecisionNotes('');
-      fetchRequests();
+      fetchRequests(false);
     } catch (err: any) {
-      toast.error(err.message || 'Failed to process project request decision');
+      toastError(err.message || 'Failed to process project request decision');
     } finally {
       setSubmitting(false);
     }

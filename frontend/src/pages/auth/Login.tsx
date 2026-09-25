@@ -18,7 +18,7 @@ export const Login: React.FC = () => {
     setLoading(true);
     try {
       const user = await login(email, password);
-      navigate(user.role === UserRole.CLIENT ? '/portal/projects' : '/app/dashboard');
+      navigate(user.role === UserRole.CLIENT ? '/portal/dashboard' : '/app/dashboard');
     } catch (err: any) {
       setError(err.message || 'Login failed');
     } finally {

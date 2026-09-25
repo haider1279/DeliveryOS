@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
+  LayoutDashboard,
   FolderKanban,
-  FileCheck,
   Receipt,
   Bell,
   LogOut,
@@ -61,6 +61,7 @@ export const ClientPortalLayout: React.FC = () => {
   };
 
   const navLinks = [
+    { label: 'Dashboard', path: '/portal/dashboard', icon: LayoutDashboard },
     { label: 'My Projects', path: '/portal/projects', icon: FolderKanban },
     { label: 'Invoices & Payments', path: '/portal/invoices', icon: Receipt },
   ];

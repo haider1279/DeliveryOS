@@ -23,7 +23,7 @@ export const AcceptInvite: React.FC = () => {
 
   useEffect(() => {
     if (user) {
-      navigate(user.role === UserRole.CLIENT ? '/portal/projects' : '/app/dashboard', { replace: true });
+      navigate(user.role === UserRole.CLIENT ? '/portal/dashboard' : '/app/dashboard', { replace: true });
     }
   }, [user, navigate]);
 
@@ -74,7 +74,7 @@ export const AcceptInvite: React.FC = () => {
       );
       setSession(res.token, res.user);
       toast.success('Invitation accepted — welcome to DeliveryOS!');
-      navigate(res.user.role === UserRole.CLIENT ? '/portal/projects' : '/app/dashboard');
+      navigate(res.user.role === UserRole.CLIENT ? '/portal/dashboard' : '/app/dashboard');
     } catch (err: any) {
       setError(err.message || 'Failed to accept invitation');
     } finally {

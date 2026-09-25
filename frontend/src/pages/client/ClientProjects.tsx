@@ -36,9 +36,9 @@ export const ClientProjects: React.FC = () => {
     notes: '',
   });
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     try {
-      setLoading(true);
       const [projectsData, requestsData] = await Promise.all([
         api.get<any[]>('/projects').catch(() => []),
         api.get<any>('/projects/requests').catch(() => []),
@@ -49,7 +49,7 @@ export const ClientProjects: React.FC = () => {
     } catch (err: any) {
       console.error(err);
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, []);
 
@@ -71,7 +71,7 @@ export const ClientProjects: React.FC = () => {
       toast.success('Project request submitted successfully! An administrator will review your request.');
       setIsRequestOpen(false);
       setForm({ name: '', description: '', budget: '', targetDate: '', notes: '' });
-      fetchData();
+      fetchData(false);
     } catch (err: any) {
       toast.error(err.message || 'Failed to submit project request');
     } finally {

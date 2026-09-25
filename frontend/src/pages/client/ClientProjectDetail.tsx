@@ -31,6 +31,7 @@ export const ClientProjectDetail: React.FC = () => {
   const [releases, setReleases] = useState<any[]>([]);
   const [bugs, setBugs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Submit Requirement Modal (Pre-deployment only)
   const [isSubmitOpen, setIsSubmitOpen] = useState(false);
@@ -56,6 +57,7 @@ export const ClientProjectDetail: React.FC = () => {
   const [submittingBug, setSubmittingBug] = useState(false);
 
   const fetchProjectData = async () => {
+    setLoadError(null);
     try {
       const [pRes, rRes, relRes, bugRes]: [any, any, any, any] = await Promise.all([
         api.get(`/projects/${id}`),
@@ -67,8 +69,9 @@ export const ClientProjectDetail: React.FC = () => {
       setRequirements(rRes?.items || rRes || []);
       setReleases(relRes?.releases || relRes || []);
       setBugs(bugRes?.bugs || bugRes || []);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setLoadError(err.message || 'Failed to load this project');
     } finally {
       setLoading(false);
     }
@@ -162,7 +165,33 @@ export const ClientProjectDetail: React.FC = () => {
     }
   };
 
-  if (loading || !project) return <LoadingSpinner size="lg" className="h-64" />;
+  if (loading) return <LoadingSpinner size="lg" className="h-64" />;
+
+  if (!project) {
+    return (
+      <div className="mx-auto max-w-xl rounded-2xl border border-rose-200 bg-rose-50 p-8 text-center">
+        <p className="text-sm font-semibold text-rose-800">{loadError || 'Project not found.'}</p>
+        <div className="mt-4 flex justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setLoading(true);
+              fetchProjectData();
+            }}
+            className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700"
+          >
+            Try again
+          </button>
+          <Link
+            to="/portal/projects"
+            className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+          >
+            Back to projects
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8">

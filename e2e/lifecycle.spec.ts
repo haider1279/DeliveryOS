@@ -105,7 +105,7 @@ test.describe.serial('DeliveryOS Full Role-Based E2E Lifecycle', () => {
     await page.getByLabel(/email/i).fill('haider6.euroshub@gmail.com');
     await page.getByLabel(/password/i).fill('Client#2026!DeliveryOS');
     await page.getByRole('button', { name: /sign in/i }).click();
-    await expect(page).toHaveURL(/\/portal\/projects/);
+    await expect(page).toHaveURL(/\/portal\/dashboard/);
 
     await page.getByRole('link', { name: /Invoices & Payments/i }).click();
     await expect(page).toHaveURL(/\/portal\/invoices/);
@@ -123,15 +123,15 @@ test.describe.serial('DeliveryOS Full Role-Based E2E Lifecycle', () => {
     await expect(page.getByRole('heading', { name: /QA & Bug Tracker/i })).toBeVisible();
   });
 
-  test('Step 7: Developer logs in to My Work workspace', async ({ page }) => {
+  test('Step 7: Developer sees assigned work on the dashboard', async ({ page }) => {
     await page.goto('/login');
     await page.getByLabel(/email/i).fill('haider7.euroshub@gmail.com');
     await page.getByLabel(/password/i).fill('Developer#2026!DeliveryOS');
     await page.getByRole('button', { name: /sign in/i }).click();
     await expect(page).toHaveURL(/\/app\/dashboard/);
 
-    await page.getByRole('link', { name: /^My Work$/i }).click();
-    await expect(page).toHaveURL(/\/app\/my-work/);
+    await expect(page.getByRole('heading', { name: /My Assigned Work/i })).toBeVisible();
+    await expect(page.getByRole('link', { name: /^My Work$/i })).not.toBeVisible();
   });
 });
 

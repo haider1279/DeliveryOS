@@ -629,13 +629,23 @@ export class TaskService {
   /**
    * Aggregates the logged-in user's active tasks for the "My Work" developer dashboard.
    */
-  async getMyWork(userId: string) {
+  async getMyWork(actor: AuthenticatedUser) {
+    const userId = actor.id;
     const now = new Date();
     const threeDaysFromNow = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+    const accessibleProjectIds = await getAccessibleProjectIds(actor);
+    const projectScope =
+      accessibleProjectIds === null
+        ? { project: { deletedAt: null } }
+        : {
+            projectId: { in: accessibleProjectIds },
+            project: { deletedAt: null },
+          };
 
     const [activeTasks, recentTimeEntries, assignedBugs] = await Promise.all([
       prisma.task.findMany({
         where: {
+          ...projectScope,
           assigneeId: userId,
           deletedAt: null,
           status: { notIn: [TaskStatus.DONE, TaskStatus.CANCELLED] },
@@ -643,6 +653,7 @@ export class TaskService {
         include: {
           project: { select: { id: true, name: true, code: true } },
           requirement: { select: { id: true, title: true } },
+          _count: { select: { comments: true } },
         },
         orderBy: [
           { priority: 'desc' },
@@ -650,7 +661,7 @@ export class TaskService {
         ],
       }),
       prisma.timeEntry.findMany({
-        where: { userId },
+        where: { ...projectScope, userId },
         include: {
           task: { select: { id: true, title: true } },
           project: { select: { id: true, name: true, code: true } },
@@ -660,6 +671,7 @@ export class TaskService {
       }),
       prisma.bug.findMany({
         where: {
+          ...projectScope,
           assigneeId: userId,
           status: { notIn: ['CLOSED', 'WONT_FIX'] },
         },

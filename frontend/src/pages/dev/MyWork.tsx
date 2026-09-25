@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { CheckSquare, Clock, AlertTriangle, Bug, Plus, CheckCircle2, MessageSquare, Send } from 'lucide-react';
 import { api } from '../../api/client';
 import { MetricCard } from '../../components/ui/MetricCard';
@@ -9,66 +9,76 @@ import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
-import { CommentVisibility } from '@deliveryos/shared';
+import { CommentVisibility, TaskStatus, UserRole } from '@deliveryos/shared';
 
-export const MyWork: React.FC = () => {
+const TASK_STATUS_OPTIONS: Record<string, TaskStatus[]> = {
+  [TaskStatus.TODO]: [TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED, TaskStatus.CANCELLED],
+  [TaskStatus.IN_PROGRESS]: [TaskStatus.CODE_REVIEW, TaskStatus.BLOCKED, TaskStatus.DONE, TaskStatus.CANCELLED],
+  [TaskStatus.CODE_REVIEW]: [TaskStatus.READY_FOR_QA, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED, TaskStatus.DONE, TaskStatus.CANCELLED],
+  [TaskStatus.BLOCKED]: [TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED],
+  [TaskStatus.READY_FOR_QA]: [TaskStatus.DONE, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED],
+  [TaskStatus.DONE]: [TaskStatus.IN_PROGRESS, TaskStatus.TODO, TaskStatus.CANCELLED],
+  [TaskStatus.CANCELLED]: [TaskStatus.TODO, TaskStatus.IN_PROGRESS],
+};
+
+export const WorkQueueSection: React.FC = () => {
   const toast = useToast();
   const { user } = useAuth();
   const [data, setData] = useState<any>(null);
-  const [tasks, setTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [updatingTaskId, setUpdatingTaskId] = useState<string | null>(null);
+  const [isLoggingTime, setIsLoggingTime] = useState(false);
+  const [isAddingComment, setIsAddingComment] = useState(false);
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [isTimeModalOpen, setIsTimeModalOpen] = useState(false);
   const [durationMinutes, setDurationMinutes] = useState('60');
   const [note, setNote] = useState('');
 
-  // Task comments modal
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [commentsTask, setCommentsTask] = useState<any>(null);
   const [taskDetail, setTaskDetail] = useState<any>(null);
   const [taskDetailLoading, setTaskDetailLoading] = useState(false);
   const [commentText, setCommentText] = useState('');
 
-  const fetchMyWork = async () => {
+  const fetchMyWork = useCallback(async (showLoading = false) => {
+    if (showLoading) {
+      setLoading(true);
+      setLoadError(null);
+    }
     try {
       const res = await api.get<any>('/tasks/my-work');
       setData(res);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchTasks = async () => {
-    if (!user?.id) return;
-    try {
-      const res: any = await api.get('/tasks', { assigneeId: user.id });
-      setTasks(res?.tasks || res || []);
     } catch (err: any) {
-      toast.error(err.message || 'Failed to load tasks');
+      console.error(err);
+      if (showLoading) setLoadError(err.message || 'Failed to load your assigned work');
+    } finally {
+      if (showLoading) setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchMyWork();
-    fetchTasks();
-  }, [user?.id]);
+    fetchMyWork(true);
+  }, [fetchMyWork]);
 
   const handleUpdateStatus = async (taskId: string, status: string) => {
+    if (user?.role === UserRole.QA || updatingTaskId) return;
+    setUpdatingTaskId(taskId);
     try {
       await api.patch(`/tasks/${taskId}`, { status });
       toast.success(`Task moved to ${status.replace(/_/g, ' ')}`);
-      fetchMyWork();
-      fetchTasks();
+      await fetchMyWork();
     } catch (err: any) {
       toast.error(err.message || 'Failed to update task status');
+    } finally {
+      setUpdatingTaskId(null);
     }
   };
 
   const handleLogTime = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedTask) return;
+    if (!selectedTask || isLoggingTime) return;
+    setIsLoggingTime(true);
     try {
       await api.post('/tasks/time-entries', {
         taskId: selectedTask.id,
@@ -80,9 +90,11 @@ export const MyWork: React.FC = () => {
       setIsTimeModalOpen(false);
       setNote('');
       toast.success('Time entry logged');
-      fetchMyWork();
+      await fetchMyWork();
     } catch (err: any) {
       toast.error(err.message || 'Failed to log time');
+    } finally {
+      setIsLoggingTime(false);
     }
   };
 
@@ -104,7 +116,8 @@ export const MyWork: React.FC = () => {
 
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!commentsTask || !commentText.trim()) return;
+    if (!commentsTask || !commentText.trim() || isAddingComment) return;
+    setIsAddingComment(true);
     try {
       await api.post(`/tasks/${commentsTask.id}/comments`, {
         content: commentText.trim(),
@@ -113,25 +126,50 @@ export const MyWork: React.FC = () => {
       setCommentText('');
       const detail = await api.get<any>(`/tasks/${commentsTask.id}`);
       setTaskDetail(detail);
-      fetchTasks();
       toast.success('Comment added');
+      void fetchMyWork();
     } catch (err: any) {
       toast.error(err.message || 'Failed to add comment');
+    } finally {
+      setIsAddingComment(false);
     }
   };
 
-  if (loading) return <LoadingSpinner size="lg" className="h-64" />;
+  if (loading && !data) return <LoadingSpinner size="lg" className="h-40" />;
 
-  const { assignedBugs = [], recentTimeEntries = [], summary = {} } = data || {};
-  const visibleTasks = tasks.filter(
+  if (!data && loadError) {
+    return (
+      <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-center">
+        <p className="text-sm font-semibold text-rose-800">{loadError}</p>
+        <button
+          type="button"
+          onClick={() => fetchMyWork(true)}
+          className="mt-4 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  const { assignedBugs = [], recentTimeEntries = [], summary = {}, activeTasks = [] } = data || {};
+  const visibleTasks = activeTasks.filter(
     (t: any) => t.status !== 'DONE' && t.status !== 'CANCELLED'
   );
+  const canUpdateTaskStatus = user?.role !== UserRole.QA;
+  const getTaskStatusOptions = (status: string): string[] => {
+    if (!canUpdateTaskStatus) return [status];
+    const options = TASK_STATUS_OPTIONS[status] || [status];
+    return user?.role === UserRole.DEVELOPER
+      ? options.filter((option) => option !== TaskStatus.CANCELLED)
+      : options;
+  };
 
   return (
     <div className="space-y-8">
       {/* Header */}
       <div>
-        <h2 className="text-xl font-bold text-slate-900 tracking-tight">My Work Dashboard</h2>
+        <h2 className="text-xl font-bold text-slate-900 tracking-tight">My Assigned Work</h2>
         <p className="text-xs text-slate-500 mt-1">
           Your personal queue of assigned tasks, due milestones, open defects, and logged time.
         </p>
@@ -203,14 +241,15 @@ export const MyWork: React.FC = () => {
                   <select
                     value={task.status}
                     onChange={(e) => handleUpdateStatus(task.id, e.target.value)}
+                    disabled={!canUpdateTaskStatus || updatingTaskId !== null}
                     aria-label={`Status for task: ${task.title}`}
-                    className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none"
+                    className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    <option value="TODO">TODO</option>
-                    <option value="IN_PROGRESS">IN PROGRESS</option>
-                    <option value="BLOCKED">BLOCKED</option>
-                    <option value="READY_FOR_QA">READY FOR QA</option>
-                    <option value="DONE">DONE</option>
+                    {getTaskStatusOptions(task.status).map((status) => (
+                      <option key={status} value={status}>
+                        {status.replace(/_/g, ' ')}
+                      </option>
+                    ))}
                   </select>
 
                   <button
@@ -262,6 +301,32 @@ export const MyWork: React.FC = () => {
         </div>
       )}
 
+      {recentTimeEntries.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200/80 p-6 space-y-4">
+          <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+            Recent Time Log
+          </h3>
+          <div className="divide-y divide-slate-100">
+            {recentTimeEntries.slice(0, 5).map((entry: any) => (
+              <div key={entry.id} className="py-3 flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-slate-800 truncate">
+                    {entry.task?.title || entry.project?.name || 'Work entry'}
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    {entry.project?.name} · {new Date(entry.date).toLocaleDateString()}
+                  </p>
+                </div>
+                <span className="flex items-center gap-1 text-xs font-semibold text-brand-600 shrink-0">
+                  <Clock className="h-3.5 w-3.5" />
+                  {Math.round(entry.durationMinutes / 6) / 10} hrs
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Time Log Modal */}
       <Modal
         isOpen={isTimeModalOpen}
@@ -300,9 +365,10 @@ export const MyWork: React.FC = () => {
             </button>
             <button
               type="submit"
-              className="px-3 py-1.5 rounded text-xs font-semibold bg-brand-600 text-white"
+              disabled={isLoggingTime}
+              className="px-3 py-1.5 rounded text-xs font-semibold bg-brand-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Save Time Entry
+              {isLoggingTime ? 'Saving…' : 'Save Time Entry'}
             </button>
           </div>
         </form>
@@ -315,7 +381,7 @@ export const MyWork: React.FC = () => {
         title={`Comments: ${commentsTask?.title || ''}`}
         maxWidth="xl"
       >
-        {taskDetailLoading && !taskDetail?.comments ? (
+        {taskDetailLoading ? (
           <div className="py-10">
             <LoadingSpinner size="lg" />
           </div>
@@ -376,10 +442,10 @@ export const MyWork: React.FC = () => {
                 />
                 <button
                   type="submit"
-                  disabled={!commentText.trim()}
+                  disabled={!commentText.trim() || isAddingComment}
                   className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <Send className="h-3.5 w-3.5" /> Add
+                  <Send className="h-3.5 w-3.5" /> {isAddingComment ? 'Adding…' : 'Add'}
                 </button>
               </form>
             </div>

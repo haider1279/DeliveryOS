@@ -17,6 +17,7 @@ import { MetricCard } from '../../components/ui/MetricCard';
 import { HealthBadge } from '../../components/ui/HealthBadge';
 import { StatusBadge } from '../../components/ui/StatusBadge';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
+import { WorkQueueSection } from '../dev/MyWork';
 import { useAuth } from '../../context/AuthContext';
 import { UserRole, OrganizationQualificationStatus } from '@deliveryos/shared';
 
@@ -46,6 +47,9 @@ export const InternalDashboard: React.FC = () => {
     user?.role === UserRole.SUPER_ADMIN ||
     user?.role === UserRole.ADMIN ||
     user?.role === UserRole.PROJECT_MANAGER;
+  const showWorkQueue = Boolean(
+    user && user.role !== UserRole.BD && user.role !== UserRole.SUPER_ADMIN
+  );
 
   useEffect(() => {
     const fetchData = async () => {
@@ -69,11 +73,11 @@ export const InternalDashboard: React.FC = () => {
         const [primaryRes, secondaryRes, orgRes] = await Promise.all(requests);
 
         if (isBD) {
-          setOrgs(primaryRes?.orgs || []);
+          setOrgs(Array.isArray(primaryRes) ? primaryRes : []);
         } else {
-          setProjects(primaryRes || []);
+          setProjects(Array.isArray(primaryRes) ? primaryRes : []);
           setSummary(secondaryRes);
-          if (orgRes) setOrgs(orgRes?.orgs || []);
+          if (orgRes) setOrgs(Array.isArray(orgRes) ? orgRes : []);
         }
       } catch (err) {
         console.error('Failed to load dashboard data', err);
@@ -113,12 +117,12 @@ export const InternalDashboard: React.FC = () => {
               <Briefcase className="h-4 w-4" /> Clients & Leads
             </Link>
           ) : isDev ? (
-            <Link
-              to="/app/projects"
+            <a
+              href="#assigned-work"
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700 shadow-sm transition-all"
             >
-              <FolderKanban className="h-4 w-4" /> Go to Projects
-            </Link>
+              <CheckSquare className="h-4 w-4" /> View Assigned Work
+            </a>
           ) : isQA ? (
             <Link
               to="/app/qa"
@@ -281,6 +285,12 @@ export const InternalDashboard: React.FC = () => {
               </Link>
             ))}
           </div>
+        </div>
+      )}
+
+      {showWorkQueue && (
+        <div id="assigned-work">
+          <WorkQueueSection />
         </div>
       )}
     </div>

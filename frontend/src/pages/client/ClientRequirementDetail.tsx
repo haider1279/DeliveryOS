@@ -25,6 +25,7 @@ export const ClientRequirementDetail: React.FC = () => {
   const toast = useToast();
   const [req, setReq] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [decision, setDecision] = useState<'APPROVED' | 'CHANGES_REQUESTED'>('APPROVED');
   const [comment, setComment] = useState('');
@@ -34,11 +35,13 @@ export const ClientRequirementDetail: React.FC = () => {
   const [submittingClarification, setSubmittingClarification] = useState(false);
 
   const fetchData = async () => {
+    setLoadError(null);
     try {
       const data = await api.get(`/requirements/${id}`);
       setReq(data);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setLoadError(err.message || 'Failed to load this requirement');
     } finally {
       setLoading(false);
     }
@@ -48,7 +51,34 @@ export const ClientRequirementDetail: React.FC = () => {
     fetchData();
   }, [id]);
 
-  if (loading || !req) return <LoadingSpinner size="lg" className="h-64" />;
+  if (loading) return <LoadingSpinner size="lg" className="h-64" />;
+
+  if (!req) {
+    return (
+      <div className="mx-auto max-w-xl rounded-2xl border border-rose-200 bg-rose-50 p-8 text-center">
+        <p className="text-sm font-semibold text-rose-800">{loadError || 'Requirement not found.'}</p>
+        <div className="mt-4 flex justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setLoading(true);
+              fetchData();
+            }}
+            className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700"
+          >
+            Try again
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+          >
+            Go back
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const sentEstimate = (req.estimates || []).find((est: any) => est.status === 'SENT');
 

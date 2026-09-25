@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   FolderKanban,
   FileText,
@@ -47,6 +47,7 @@ export const ProjectWorkspace: React.FC = () => {
   const [project, setProject] = useState<any>(null);
   const [health, setHealth] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Data states per tab
   const [requirements, setRequirements] = useState<any[]>([]);
@@ -142,6 +143,7 @@ export const ProjectWorkspace: React.FC = () => {
   const [reqDetailLoading, setReqDetailLoading] = useState(false);
 
   const fetchProjectData = async () => {
+    setLoadError(null);
     try {
       const [projData, healthData] = await Promise.all([
         api.get<any>(`/projects/${id}`),
@@ -149,8 +151,9 @@ export const ProjectWorkspace: React.FC = () => {
       ]);
       setProject(projData);
       setHealth(healthData);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setLoadError(err.message || 'Failed to load this project workspace');
     } finally {
       setLoading(false);
     }
@@ -593,7 +596,33 @@ export const ProjectWorkspace: React.FC = () => {
     }
   };
 
-  if (loading || !project) return <LoadingSpinner size="lg" className="h-64" />;
+  if (loading) return <LoadingSpinner size="lg" className="h-64" />;
+
+  if (!project) {
+    return (
+      <div className="mx-auto max-w-xl rounded-2xl border border-rose-200 bg-rose-50 p-8 text-center">
+        <p className="text-sm font-semibold text-rose-800">{loadError || 'Project workspace not found.'}</p>
+        <div className="mt-4 flex justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setLoading(true);
+              fetchProjectData();
+            }}
+            className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700"
+          >
+            Try again
+          </button>
+          <Link
+            to="/app/projects"
+            className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+          >
+            Back to projects
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   // Requirement workflow actions for the internal workspace (clients review in
   // the portal). Mirrors the backend REQUIREMENT_TRANSITIONS map.

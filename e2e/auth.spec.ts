@@ -32,11 +32,11 @@ test.describe('Authentication & route guards', () => {
     await page.getByLabel(/password/i).fill('Client#2026!DeliveryOS');
     await page.getByRole('button', { name: /sign in/i }).click();
 
-    await expect(page).toHaveURL(/\/portal\/projects/);
+    await expect(page).toHaveURL(/\/portal\/dashboard/);
 
     // Client browsing /app is bounced back into the portal.
     await page.goto('/app/dashboard');
-    await expect(page).toHaveURL(/\/portal\/projects/);
+    await expect(page).toHaveURL(/\/portal\/dashboard/);
   });
 
   test('admin cannot reach the client portal (redirected to dashboard)', async ({ page }) => {

@@ -85,7 +85,7 @@ export class TaskController {
 
   async getMyWork(req: Request, res: Response, next: NextFunction) {
     try {
-      const myWork = await taskService.getMyWork(req.user!.id);
+      const myWork = await taskService.getMyWork(req.user!);
       sendSuccess(res, { data: myWork });
     } catch (err) {
       next(err);

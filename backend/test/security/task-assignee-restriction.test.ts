@@ -128,4 +128,18 @@ describe('Task Assignee Selection & Authorization Restrictions', () => {
     expect(res.status).toBe(201);
     expect(res.body.success).toBe(true);
   });
+
+  it('hides assigned work from a developer removed from the project', async () => {
+    const removeRes = await request(app)
+      .delete(`/api/projects/${projectId}/members/${devUser.id}`)
+      .set('Authorization', `Bearer ${pmToken}`);
+    expect(removeRes.status).toBe(200);
+
+    const res = await request(app)
+      .get('/api/tasks/my-work')
+      .set('Authorization', `Bearer ${devToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.activeTasks.some((task: any) => task.projectId === projectId)).toBe(false);
+  });
 });
