@@ -19,7 +19,6 @@ import {
   ShieldCheck,
   User,
   History,
-  Paperclip,
   Wallet,
   ChevronDown,
   ChevronRight,
@@ -55,7 +54,6 @@ export const ProjectWorkspace: React.FC = () => {
   const [bugs, setBugs] = useState<any[]>([]);
   const [releases, setReleases] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
-  const [files, setFiles] = useState<any[]>([]);
   const [activities, setActivities] = useState<any[]>([]);
   const [profitability, setProfitability] = useState<any>(null);
 
@@ -187,9 +185,6 @@ export const ProjectWorkspace: React.FC = () => {
         ]);
         setInvoices(invRes?.invoices || invRes || []);
         setProfitability(profRes);
-      } else if (activeTab === 'files') {
-        const res: any = await api.get(`/storage/project/${id}`);
-        setFiles(res || []);
       } else if (activeTab === 'activity') {
         const res: any = await api.get(`/projects/${id}/activity`);
         setActivities(res || []);
@@ -676,7 +671,6 @@ export const ProjectWorkspace: React.FC = () => {
     { id: 'qa', label: 'QA & Bugs', icon: Bug },
     { id: 'releases', label: 'Releases', icon: Rocket },
     ...(canViewFinance ? [{ id: 'finance', label: 'Finance & Invoices', icon: Receipt }] : []),
-    { id: 'files', label: 'Files', icon: Paperclip },
     { id: 'activity', label: 'Activity Timeline', icon: Activity },
   ];
 
@@ -1265,59 +1259,6 @@ export const ProjectWorkspace: React.FC = () => {
                   </div>
                 );
               })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 6. FILES TAB */}
-      {activeTab === 'files' && (
-        <div className="space-y-4">
-          <h3 className="text-sm font-bold text-slate-800">Project Files</h3>
-          {files.length === 0 ? (
-            <EmptyState
-              icon={Paperclip}
-              title="No files attached"
-              description="File uploads are disabled in DeliveryOS."
-            />
-          ) : (
-            <div className="bg-white rounded-2xl border border-slate-200/80 divide-y divide-slate-100">
-              {files.map((f) => (
-                <div key={f.id} className="px-5 py-4 flex items-center justify-between gap-3 flex-wrap">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
-                      <Paperclip className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-slate-900 truncate">
-                        {f.originalFilename}
-                      </p>
-                      <p className="text-[11px] text-slate-500">
-                        {f.mimeType} • {(f.sizeBytes / 1024).toFixed(1)} KB •{' '}
-                        {f.uploadedBy?.profile?.displayName || f.uploadedBy?.email || 'Unknown'}{' '}
-                        • {new Date(f.createdAt).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <StatusBadge status={f.visibility} />
-                    {f.downloadUrl ? (
-                      <a
-                        href={f.downloadUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs font-semibold text-brand-600 hover:text-brand-700"
-                      >
-                        Download
-                      </a>
-                    ) : (
-                      <span className="text-[11px] text-slate-400" title="Object storage is not configured in this environment">
-                        Download unavailable
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
             </div>
           )}
         </div>
