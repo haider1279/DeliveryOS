@@ -42,6 +42,7 @@ export const ProjectWorkspace: React.FC = () => {
   const activeTab = searchParams.get('tab') || 'overview';
   const { user } = useAuth();
   const toast = useToast();
+  const canReportBug = ['SUPER_ADMIN', 'ADMIN', 'QA'].includes(user?.role || '');
 
   const [project, setProject] = useState<any>(null);
   const [health, setHealth] = useState<any>(null);
@@ -1082,12 +1083,14 @@ export const ProjectWorkspace: React.FC = () => {
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-800">Bugs & QA Tickets</h3>
-            <button
-              onClick={() => setIsBugModalOpen(true)}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-600 text-white hover:bg-rose-700"
-            >
-              <Plus className="h-3.5 w-3.5" /> Report Bug
-            </button>
+            {canReportBug && (
+              <button
+                onClick={() => setIsBugModalOpen(true)}
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-600 text-white hover:bg-rose-700"
+              >
+                <Plus className="h-3.5 w-3.5" /> Report Bug
+              </button>
+            )}
           </div>
 
           {bugs.length === 0 ? (
@@ -1095,7 +1098,7 @@ export const ProjectWorkspace: React.FC = () => {
               icon={Bug}
               title="No bugs reported"
               description="No open defects found for this project."
-              action={{ label: 'Report Bug', onClick: () => setIsBugModalOpen(true) }}
+              action={canReportBug ? { label: 'Report Bug', onClick: () => setIsBugModalOpen(true) } : undefined}
             />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

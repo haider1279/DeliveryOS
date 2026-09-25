@@ -265,13 +265,11 @@ export class QaService {
     const allowedRoles = [
       UserRole.SUPER_ADMIN,
       UserRole.ADMIN,
-      UserRole.PROJECT_MANAGER,
-      UserRole.DEVELOPER,
       UserRole.QA,
       UserRole.CLIENT,
     ];
     if (!allowedRoles.includes(actor.role)) {
-      throw AppError.forbidden('Insufficient permissions to report bugs');
+      throw AppError.forbidden('Only QA and Administrators can report bugs');
     }
 
     await assertProjectWritable(actor, input.projectId);

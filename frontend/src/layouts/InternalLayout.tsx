@@ -85,7 +85,6 @@ export const InternalLayout: React.FC = () => {
     // Project execution items — hidden from BD
     ...(!isBD ? [
       { label: 'Projects', path: '/app/projects', icon: FolderKanban },
-      { label: 'My Work', path: '/app/my-work', icon: CheckSquare },
       ...(isRole([UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.QA])
         ? [{ label: 'QA & Bugs', path: '/app/qa', icon: Bug }]
         : []),
@@ -102,7 +101,6 @@ export const InternalLayout: React.FC = () => {
       : []),
     ...(isRole([UserRole.SUPER_ADMIN, UserRole.ADMIN])
       ? [
-          { label: 'Project Requests', path: '/app/project-requests', icon: FileText },
           { label: 'Team', path: '/app/users', icon: Users },
           { label: 'Audit Log', path: '/app/audit', icon: ShieldCheck },
         ]

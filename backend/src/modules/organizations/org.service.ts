@@ -10,6 +10,7 @@ import {
   AuthenticatedUser,
 } from '@deliveryos/shared';
 import { getAccessibleOrganizationIds } from '../../services/project-access.service';
+import { userService } from '../users/user.service';
 
 export class OrgService {
   async createOrg(input: CreateOrganizationInput, actor: AuthenticatedUser) {
@@ -103,15 +104,28 @@ export class OrgService {
       },
     });
 
-    await auditService.log({
-      actorId: actor.id,
-      action: decision === OrganizationQualificationStatus.APPROVED
-        ? 'ORGANIZATION_QUALIFIED'
-        : 'ORGANIZATION_REJECTED',
-      entityType: 'Organization',
-      entityId: id,
-      metadata: { name: org.name, decision, notes: notes ?? null },
-    });
+    // Automatically invite client representative upon lead approval if contactEmail is available
+    if (decision === OrganizationQualificationStatus.APPROVED && org.contactEmail) {
+      const existingUser = await prisma.user.findFirst({
+        where: { email: org.contactEmail },
+      });
+      if (!existingUser) {
+        try {
+          await userService.inviteUser(
+            {
+              email: org.contactEmail,
+              firstName: org.name || 'Client',
+              lastName: 'Representative',
+              role: UserRole.CLIENT,
+              organizationId: org.id,
+            },
+            actor
+          );
+        } catch (invErr) {
+          console.error('[lead-approval] Auto-invite failed:', (invErr as Error).message);
+        }
+      }
+    }
 
     return updated;
   }

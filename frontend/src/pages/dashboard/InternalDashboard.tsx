@@ -114,10 +114,10 @@ export const InternalDashboard: React.FC = () => {
             </Link>
           ) : isDev ? (
             <Link
-              to="/app/my-work"
+              to="/app/projects"
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700 shadow-sm transition-all"
             >
-              <CheckSquare className="h-4 w-4" /> Go to My Work
+              <FolderKanban className="h-4 w-4" /> Go to Projects
             </Link>
           ) : isQA ? (
             <Link

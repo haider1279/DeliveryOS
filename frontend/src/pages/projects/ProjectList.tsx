@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { Plus, Search, FolderKanban, Calendar, DollarSign, User } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { Plus, Search, FolderKanban, Calendar, DollarSign, User, FileText } from 'lucide-react';
 import { api } from '../../api/client';
 import { StatusBadge } from '../../components/ui/StatusBadge';
 import { HealthBadge } from '../../components/ui/HealthBadge';
@@ -9,9 +9,12 @@ import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useAuth } from '../../context/AuthContext';
 import { UserRole } from '@deliveryos/shared';
+import { ProjectRequests } from '../admin/ProjectRequests';
 
 export const ProjectList: React.FC = () => {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentTab = searchParams.get('tab') || 'projects';
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -115,6 +118,37 @@ export const ProjectList: React.FC = () => {
         )}
       </div>
 
+      {/* Workspace Tabs for Admin/SuperAdmin */}
+      {canCreate && (
+        <div className="flex border-b border-slate-200 gap-6">
+          <button
+            onClick={() => setSearchParams({ tab: 'projects' })}
+            className={`pb-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 ${
+              currentTab !== 'requests'
+                ? 'border-brand-600 text-brand-600'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <FolderKanban className="h-4 w-4" /> Active & Deployed Projects
+          </button>
+          <button
+            onClick={() => setSearchParams({ tab: 'requests' })}
+            className={`pb-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 ${
+              currentTab === 'requests'
+                ? 'border-brand-600 text-brand-600'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <FileText className="h-4 w-4" /> Project Requests
+          </button>
+        </div>
+      )}
+
+      {currentTab === 'requests' && canCreate ? (
+        <ProjectRequests />
+      ) : (
+        <>
+
       {/* Filters Bar */}
       <div className="flex flex-col sm:flex-row items-center gap-3">
         <div className="relative flex-1 w-full">
@@ -153,7 +187,7 @@ export const ProjectList: React.FC = () => {
         />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {projects.map((p) => (
+          {projects.map((p: any) => (
             <Link
               key={p.id}
               to={`/app/projects/${p.id}`}
@@ -196,6 +230,8 @@ export const ProjectList: React.FC = () => {
             </Link>
           ))}
         </div>
+      )}
+        </>
       )}
 
       {/* Create Project Modal */}
@@ -240,7 +276,7 @@ export const ProjectList: React.FC = () => {
               onChange={(e) => setOrgId(e.target.value)}
               className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 text-xs focus:outline-none focus:border-brand-500"
             >
-              {orgs.map((o) => (
+              {orgs.map((o: any) => (
                 <option key={o.id} value={o.id}>
                   {o.name}
                 </option>
@@ -255,7 +291,7 @@ export const ProjectList: React.FC = () => {
               onChange={(e) => setPmId(e.target.value)}
               className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 text-xs focus:outline-none focus:border-brand-500"
             >
-              {pms.map((pm) => (
+              {pms.map((pm: any) => (
                 <option key={pm.id} value={pm.id}>
                   {pm.profile?.displayName || pm.email}
                 </option>

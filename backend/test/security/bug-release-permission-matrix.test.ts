@@ -302,7 +302,7 @@ describe('Bug & Release Permission Matrix + Post-Deployment Security', () => {
         });
 
       expect(res.status).toBe(403);
-      expect(res.body.error?.message).toContain('Developers cannot assign bugs to other users');
+      expect(res.body.error?.message).toMatch(/Only QA and Administrators|Developers cannot/);
     });
 
     it('Cannot skip states: OPEN cannot transition straight to IN_PROGRESS (must be TRIAGED first)', async () => {

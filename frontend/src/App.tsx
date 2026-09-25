@@ -106,7 +106,7 @@ export const App: React.FC = () => {
                 <Route path="dashboard" element={<InternalDashboard />} />
                 <Route path="projects" element={<ProjectList />} />
                 <Route path="projects/:id" element={<ProjectWorkspace />} />
-                <Route path="my-work" element={<MyWork />} />
+                <Route path="my-work" element={<Navigate to="/app/dashboard" replace />} />
                 <Route
                   path="qa"
                   element={
@@ -186,14 +186,7 @@ export const App: React.FC = () => {
                     </ProtectedRoute>
                   }
                 />
-                <Route
-                  path="project-requests"
-                  element={
-                    <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN, UserRole.ADMIN]}>
-                      <ProjectRequests />
-                    </ProtectedRoute>
-                  }
-                />
+                <Route path="project-requests" element={<Navigate to="/app/projects?tab=requests" replace />} />
               </Route>
 
               {/* Dedicated Client Portal */}

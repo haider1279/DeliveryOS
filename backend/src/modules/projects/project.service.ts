@@ -293,6 +293,12 @@ export const projectService = {
     const project = await prisma.project.findFirst({ where: { id: projectId, deletedAt: null } });
     if (!project) throw new AppError('NOT_FOUND', 'Project not found', 404);
 
+    if (dto.projectManagerId && dto.projectManagerId !== project.projectManagerId) {
+      if (actor.role !== UserRole.SUPER_ADMIN && actor.role !== UserRole.ADMIN) {
+        throw new AppError('FORBIDDEN', 'Only administrators can reassign the Project Manager', 403);
+      }
+    }
+
     if (dto.status === ProjectStatus.CANCELLED || dto.status === ProjectStatus.ARCHIVED) {
       await auditService.log({
         actorId: actor.id,
@@ -377,6 +383,15 @@ export const projectService = {
 
     if (![UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(actor.role as UserRole)) {
       throw new AppError('FORBIDDEN', 'Insufficient permissions', 403);
+    }
+
+    const project = await prisma.project.findFirst({ where: { id: projectId, deletedAt: null } });
+    if (!project) throw new AppError('NOT_FOUND', 'Project not found', 404);
+
+    if (userId === project.projectManagerId || userId === actor.id) {
+      if (actor.role !== UserRole.SUPER_ADMIN && actor.role !== UserRole.ADMIN) {
+        throw new AppError('FORBIDDEN', 'Project Managers cannot remove themselves or unassign the Project Manager role. Only administrators can change project manager assignments.', 403);
+      }
     }
 
     const membership = await prisma.projectMember.findFirst({
