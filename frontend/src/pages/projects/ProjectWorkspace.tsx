@@ -1687,6 +1687,18 @@ export const ProjectWorkspace: React.FC = () => {
             />
           </div>
           <div>
+            <label className="block text-xs font-semibold text-slate-700">Description</label>
+            <textarea
+              required
+              minLength={5}
+              rows={2}
+              value={bugDesc}
+              onChange={(e) => setBugDesc(e.target.value)}
+              placeholder="Brief summary of the defect"
+              className="mt-1 w-full px-3 py-2 rounded-lg border text-xs focus:outline-none focus:border-brand-500"
+            />
+          </div>
+          <div>
             <label className="block text-xs font-semibold text-slate-700">Severity</label>
             <select
               value={bugSeverity}
