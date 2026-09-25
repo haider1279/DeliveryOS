@@ -8,10 +8,11 @@ import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useToast } from '../../context/ToastContext';
 import { BugStatus, CommentVisibility } from '@deliveryos/shared';
-
-const BUG_STATUS_OPTIONS = Object.values(BugStatus);
+import { useAuth } from '../../context/AuthContext';
+import { getAvailableBugTransitions } from '../../utils/bug-transitions';
 
 export const QaWorkspace: React.FC = () => {
+  const { user } = useAuth();
   const toast = useToast();
   const [bugs, setBugs] = useState<any[]>([]);
   const [testCases, setTestCases] = useState<any[]>([]);
@@ -66,7 +67,7 @@ export const QaWorkspace: React.FC = () => {
   }, []);
 
   const handleUpdateBugStatus = async (bugId: string, status: string) => {
-    if (!BUG_STATUS_OPTIONS.includes(status as BugStatus)) return;
+    if (!Object.values(BugStatus).includes(status as BugStatus)) return;
     try {
       await api.patch(`/qa/bugs/${bugId}/status`, { status });
       toast.success(`Bug moved to ${status.replace(/_/g, ' ')}`);
@@ -215,18 +216,29 @@ export const QaWorkspace: React.FC = () => {
                         <PriorityBadge priority={bug.severity} />
                         <StatusBadge status={bug.status} />
                       </div>
-                      <select
-                        value={bug.status}
-                        onChange={(e) => handleUpdateBugStatus(bug.id, e.target.value)}
-                        aria-label={`Status for bug: ${bug.title}`}
-                        className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 focus:outline-none"
-                      >
-                        {BUG_STATUS_OPTIONS.map((status) => (
-                          <option key={status} value={status}>
-                            {status.replace(/_/g, ' ')}
-                          </option>
-                        ))}
-                      </select>
+                      {(() => {
+                        const available = getAvailableBugTransitions(bug.status as BugStatus, user?.role);
+                        const canChange = available.length > 1;
+                        return (
+                          <select
+                            value={bug.status}
+                            disabled={!canChange}
+                            onChange={(e) => handleUpdateBugStatus(bug.id, e.target.value)}
+                            aria-label={`Status for bug: ${bug.title}`}
+                            className={`text-xs font-semibold rounded-lg px-2 py-1 focus:outline-none ${
+                              canChange
+                                ? 'bg-slate-50 border border-slate-200 cursor-pointer'
+                                : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                            }`}
+                          >
+                            {available.map((status) => (
+                              <option key={status} value={status}>
+                                {status.replace(/_/g, ' ')}
+                              </option>
+                            ))}
+                          </select>
+                        );
+                      })()}
                     </div>
 
                     <h4 className="text-sm font-bold text-slate-900">{bug.title}</h4>

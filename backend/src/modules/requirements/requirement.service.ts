@@ -9,6 +9,7 @@ import {
   CommentVisibility,
   RequirementApprovalDecision,
   EstimateStatus,
+  ReleaseStatus,
 } from '@deliveryos/shared';
 import type {
   CreateRequirementDTO,
@@ -37,9 +38,22 @@ export const requirementService = {
 
     const project = await prisma.project.findFirst({
       where: { id: dto.projectId, deletedAt: null },
-      select: { organizationId: true },
+      select: {
+        organizationId: true,
+        status: true,
+        releases: {
+          where: { status: ReleaseStatus.DEPLOYED, deletedAt: null },
+          take: 1,
+        },
+      },
     });
     if (!project) throw new AppError('NOT_FOUND', 'Project not found', 404);
+
+    if (project.status === 'COMPLETED' || project.releases.length > 0) {
+      if (actor.role === UserRole.CLIENT) {
+        throw new AppError('FORBIDDEN', 'Cannot submit new requirements to a completed or deployed project', 403);
+      }
+    }
 
     const requirement = await prisma.$transaction(async (tx) => {
       const req = await tx.requirement.create({
@@ -313,6 +327,15 @@ export const requirementService = {
     // Tenant check for clients
     if (actor.role === UserRole.CLIENT && req.project.organizationId !== actor.organizationId) {
       throw new AppError('NOT_FOUND', 'Requirement not found', 404);
+    }
+
+    if (actor.role === UserRole.CLIENT) {
+      const isDeployed = req.project.status === 'COMPLETED' || (await prisma.release.count({
+        where: { projectId: req.projectId, status: ReleaseStatus.DEPLOYED, deletedAt: null },
+      })) > 0;
+      if (isDeployed) {
+        throw new AppError('FORBIDDEN', 'Cannot transition requirements for a completed or deployed project', 403);
+      }
     }
 
     if (dto.toStatus === RequirementStatus.NEEDS_CLARIFICATION && (!dto.comment || !dto.comment.trim())) {
@@ -606,9 +629,24 @@ export const requirementService = {
       // Lock and re-read fresh from DB inside the transaction
       const req = await tx.requirement.findFirst({
         where: { id: requirementId, deletedAt: null },
-        include: { project: { select: { organizationId: true } } },
+        include: {
+          project: {
+            select: {
+              organizationId: true,
+              status: true,
+              releases: {
+                where: { status: ReleaseStatus.DEPLOYED, deletedAt: null },
+                take: 1,
+              },
+            },
+          },
+        },
       });
       if (!req) throw new AppError('NOT_FOUND', 'Requirement not found', 404);
+
+      if (req.project.status === 'COMPLETED' || req.project.releases.length > 0) {
+        throw new AppError('FORBIDDEN', 'Cannot approve or reject estimates for a completed or deployed project', 403);
+      }
 
       // Tenant isolation
       if (req.project.organizationId !== actor.organizationId) {

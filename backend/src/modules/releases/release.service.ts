@@ -6,6 +6,7 @@ import { requireProjectAccess, getAccessibleProjectIds } from '../../services/pr
 import {
   UserRole,
   ReleaseStatus,
+  ProjectStatus,
   ClientReviewDecision,
   RequirementStatus,
   CommentVisibility,
@@ -16,20 +17,11 @@ import {
   DecideClientReviewInput,
   PaginationQueryInput,
 } from '@deliveryos/shared';
-
-// Releases progress through a lifecycle; moving backward only happens for
-// rollbacks/re-plans.
-const RELEASE_TRANSITIONS: Record<ReleaseStatus, readonly ReleaseStatus[]> = {
-  [ReleaseStatus.PLANNED]: [ReleaseStatus.IN_PROGRESS, ReleaseStatus.DEPLOYED, ReleaseStatus.CANCELLED],
-  [ReleaseStatus.IN_PROGRESS]: [ReleaseStatus.READY, ReleaseStatus.DEPLOYED, ReleaseStatus.CANCELLED],
-  [ReleaseStatus.READY]: [ReleaseStatus.DEPLOYED, ReleaseStatus.CANCELLED],
-  [ReleaseStatus.DEPLOYED]: [ReleaseStatus.ROLLED_BACK],
-  [ReleaseStatus.ROLLED_BACK]: [ReleaseStatus.PLANNED, ReleaseStatus.IN_PROGRESS],
-  [ReleaseStatus.CANCELLED]: [ReleaseStatus.PLANNED],
-};
-
-// Clients may only view releases that have shipped (deployed or rolled back).
-const CLIENT_VISIBLE_RELEASE_STATUSES = [ReleaseStatus.DEPLOYED, ReleaseStatus.ROLLED_BACK];
+import {
+  RELEASE_TRANSITIONS,
+  RELEASE_STATUS_ENTRY_GATES,
+  CLIENT_VISIBLE_RELEASE_STATUSES,
+} from './release-transitions';
 
 export class ReleaseService {
   /**
@@ -43,6 +35,13 @@ export class ReleaseService {
     });
     if (!project) {
       throw AppError.notFound('Project not found');
+    }
+    if (
+      project.status === ProjectStatus.COMPLETED ||
+      project.status === ProjectStatus.ARCHIVED ||
+      project.status === ProjectStatus.CANCELLED
+    ) {
+      throw AppError.badRequest(`Cannot plan a release for a ${project.status.toLowerCase()} project`);
     }
 
     // Every referenced requirement / bug must belong to this same project.
@@ -142,8 +141,13 @@ export class ReleaseService {
       throw AppError.badRequest(`Release is already in ${input.status} status`);
     }
 
-    const allowedNext = RELEASE_TRANSITIONS[release.status];
-    if (!allowedNext.includes(input.status)) {
+    const allowedRoles = RELEASE_STATUS_ENTRY_GATES[input.status];
+    if (allowedRoles && !allowedRoles.includes(actor.role)) {
+      throw AppError.forbidden(`Role ${actor.role} is not permitted to transition release to ${input.status}`);
+    }
+
+    const allowedNext = RELEASE_TRANSITIONS[release.status as ReleaseStatus];
+    if (!allowedNext || !allowedNext.includes(input.status)) {
       throw AppError.forbidden(`Cannot move release from ${release.status} to ${input.status}`);
     }
 
@@ -309,6 +313,14 @@ export class ReleaseService {
     });
     if (!requirement) {
       throw AppError.notFound('Requirement not found');
+    }
+
+    // Must not be a completed or deployed project
+    const deployedReleaseCount = await prisma.release.count({
+      where: { projectId: requirement.projectId, status: ReleaseStatus.DEPLOYED, deletedAt: null },
+    });
+    if (requirement.project.status === ProjectStatus.COMPLETED || deployedReleaseCount > 0) {
+      throw AppError.forbidden('Cannot review requirements on a completed or deployed project');
     }
 
     // Must be in CLIENT_REVIEW status

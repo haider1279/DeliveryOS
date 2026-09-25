@@ -38,7 +38,7 @@ router.get('/:id', authMiddleware, (req, res, next) => releaseController.getById
 router.patch(
   '/:id/status',
   authMiddleware,
-  requireRole([UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER]),
+  requireRole([UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.QA]),
   validate(UpdateReleaseStatusSchema),
   (req, res, next) => releaseController.updateStatus(req, res, next)
 );

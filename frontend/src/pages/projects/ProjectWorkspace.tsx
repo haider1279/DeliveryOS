@@ -36,6 +36,7 @@ import { PlanReleaseModal } from './components/PlanReleaseModal';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { UserRole, RequirementStatus, TaskStatus, BugStatus, ReleaseStatus, CommentVisibility, ReleaseItemType } from '@deliveryos/shared';
+import { getAvailableBugTransitions } from '../../utils/bug-transitions';
 
 export const ProjectWorkspace: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -1114,21 +1115,29 @@ export const ProjectWorkspace: React.FC = () => {
                       </div>
                       <h4 className="text-base font-bold text-slate-900">{bug.title}</h4>
                     </div>
-                    <select
-                      value={bug.status}
-                      onChange={(e) => handleUpdateBugStatus(bug.id, e.target.value)}
-                      aria-label={`Status for bug: ${bug.title}`}
-                      className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded px-2 py-1"
-                    >
-                      <option value="OPEN">OPEN</option>
-                      <option value="TRIAGED">TRIAGED</option>
-                      <option value="IN_PROGRESS">IN PROGRESS</option>
-                      <option value="FIXED">FIXED</option>
-                      <option value="READY_FOR_RETEST">READY FOR RETEST</option>
-                      <option value="REOPENED">REOPENED</option>
-                      <option value="WONT_FIX">WON&apos;T FIX</option>
-                      <option value="CLOSED">CLOSED</option>
-                    </select>
+                    {(() => {
+                      const available = getAvailableBugTransitions(bug.status as BugStatus, user?.role);
+                      const canChange = available.length > 1;
+                      return (
+                        <select
+                          value={bug.status}
+                          disabled={!canChange}
+                          onChange={(e) => handleUpdateBugStatus(bug.id, e.target.value)}
+                          aria-label={`Status for bug: ${bug.title}`}
+                          className={`text-xs font-semibold rounded px-2 py-1 ${
+                            canChange
+                              ? 'bg-slate-50 border border-slate-200 cursor-pointer'
+                              : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                          }`}
+                        >
+                          {available.map((st) => (
+                            <option key={st} value={st}>
+                              {st.replace(/_/g, ' ')}
+                            </option>
+                          ))}
+                        </select>
+                      );
+                    })()}
                   </div>
                   <div className="text-xs text-slate-600 space-y-1">
                     <p>
@@ -1150,7 +1159,7 @@ export const ProjectWorkspace: React.FC = () => {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-800">Release Planning</h3>
-            {canManage && (
+            {canManage && project?.status !== 'COMPLETED' && (
               <button
                 onClick={() => openReleaseModal()}
                 className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700 shadow-2xs transition-colors"
@@ -1167,7 +1176,7 @@ export const ProjectWorkspace: React.FC = () => {
                 title="No releases planned"
                 description="Group completed work into versioned releases to coordinate testing and client deployments."
               />
-              {canManage && (
+              {canManage && project?.status !== 'COMPLETED' && (
                 <button
                   type="button"
                   onClick={() => openReleaseModal()}
@@ -1200,6 +1209,8 @@ export const ProjectWorkspace: React.FC = () => {
                     [ReleaseStatus.CANCELLED]: [{ label: 'Re-plan', status: ReleaseStatus.PLANNED }],
                   };
                   actions.push(...(nextBy[rel.status] || []));
+                } else if (user?.role === UserRole.QA && rel.status === ReleaseStatus.IN_PROGRESS) {
+                  actions.push({ label: 'Mark Ready (QA Sign Off)', status: ReleaseStatus.READY });
                 }
                 return (
                   <div

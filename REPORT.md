@@ -358,3 +358,134 @@ full project workspace + client approval flow, and responsive/a11y polish are
 implemented and covered by a passing integration suite (48) **and** a real-browser
 E2E suite (14). The only unverified surfaces are Supabase network paths, which
 require access to a live Supabase tenant.
+
+---
+
+## 20. Phase-3 — Security Hardening: Bug & Release Permission Matrix + Post-Deployment Client Portal
+
+### 20.1 Client Portal Post-Deployment Behavior (Part 1)
+
+**Problem found:** When a project's status was `COMPLETED` or a release was `DEPLOYED`, the client portal still displayed the active planning workflow (submit requirements, review milestones, request changes).
+
+**Fix applied:**
+
+- `ClientProjectDetail.tsx` now derives `isDeployed = project.status === 'COMPLETED' || releases.some(r => r.status === 'DEPLOYED')`.
+- **Pre-deployment**: "Request New Feature / Requirement" button visible; requirement submission/review/clarification modals active.
+- **Post-deployment**: Planning actions removed; a premium "Deployed & Operational" status card shown with deployment date, delivered requirement count, release count, and reported warranty issues.
+- A "Report Production Bug / Issue" button replaces all planning actions.
+- Historical data (requirements as read-only, release notes, warranty bugs) remains visible.
+- `ClientProjects.tsx` visually distinguishes active projects from "Deployed & Operational" systems.
+
+**Backend enforcement (not frontend-only):**
+
+| Endpoint | Gate | Verified |
+|---|---|---|
+| `POST /api/requirements` (client) | `assertProjectWritable` → 403 when `COMPLETED` or deployed | ✅ test |
+| `POST /api/releases/requirements/:id/review` | checks `project.status === COMPLETED` or deployed release count | ✅ test |
+| `PATCH /api/requirements/:id/transition` (client) | checks `isDeployed` before allowing status changes | ✅ service |
+| `POST /api/qa/bugs` (client, deployed project) | **Allowed** — warranty defect reporting intentionally preserved | ✅ test |
+
+### 20.2 Bug Permission Matrix & State Machine (Part 2)
+
+**Backend state machine** ([`backend/src/modules/qa/bug-transitions.ts`](file:///c:/Users/Haider%20Ali/Desktop/DeliveryOS/backend/src/modules/qa/bug-transitions.ts)):
+
+```
+OPEN → TRIAGED → IN_PROGRESS → READY_FOR_RETEST → CLOSED (QA-verified)
+                                       └→ REOPENED → IN_PROGRESS
+```
+
+**Entry gates enforced server-side** in `qa.service.ts#updateBugStatus`:
+
+| Target Status | Allowed Roles |
+|---|---|
+| TRIAGED | QA, PM, Admin, SuperAdmin |
+| IN_PROGRESS | Developer, QA, PM, Admin, SuperAdmin |
+| READY_FOR_RETEST | Developer, QA, Admin, SuperAdmin |
+| CLOSED | **QA, Admin, SuperAdmin only** — Developer and PM strictly blocked |
+| REOPENED | QA, PM, Admin, SuperAdmin |
+| WONT_FIX | QA, PM, Admin, SuperAdmin |
+
+**Additional guards:**
+- CLIENT: blocked from all bug status transitions (403).
+- Developer: cannot assign bugs to other users.
+- Client: cannot assign internal staff when reporting.
+- Fixer self-verification: the assignee of a bug cannot close their own fix.
+- State jump prevention: `OPEN → IN_PROGRESS` (skipping TRIAGED) returns 403.
+- `TRIAGED → CLOSED` (skipping required stages) returns 403.
+
+**Frontend** ([`frontend/src/utils/bug-transitions.ts`](file:///c:/Users/Haider%20Ali/Desktop/DeliveryOS/frontend/src/utils/bug-transitions.ts)):
+- `getAvailableBugTransitions(currentStatus, role)` mirrors backend gates.
+- Status dropdowns in `QaWorkspace.tsx` only render valid transitions per role.
+- CLIENT gets no status controls (read-only).
+
+**Bug form fix:** `ClientProjectDetail.tsx` bug report modal was missing the required `description` field (`CreateBugSchema` requires `min(5)`). Added the field to the form, state, API payload, and reset logic.
+
+### 20.3 Release/Deployment Permission Matrix (Part 3)
+
+**Backend state machine** ([`backend/src/modules/releases/release-transitions.ts`](file:///c:/Users/Haider%20Ali/Desktop/DeliveryOS/backend/src/modules/releases/release-transitions.ts)):
+
+```
+PLANNED → IN_PROGRESS → READY (QA gate) → DEPLOYED → ROLLED_BACK
+                 └→ CANCELLED
+```
+
+**Role gates on `PATCH /api/releases/:id/status`:**
+
+| Target Status | Allowed Roles |
+|---|---|
+| IN_PROGRESS, PLANNED, CANCELLED | PM, Admin, SuperAdmin |
+| READY (QA sign-off) | QA, PM, Admin, SuperAdmin |
+| DEPLOYED | **PM, Admin, SuperAdmin** — QA and Developer cannot deploy |
+| ROLLED_BACK | PM, Admin, SuperAdmin |
+
+**Client release visibility:**
+- `GET /api/releases` (list): CLIENT sees **only** `DEPLOYED` and `ROLLED_BACK`.
+- `GET /api/releases/:id` (detail): CLIENT gets 404 for any non-client-visible status.
+- `POST /api/releases`: CLIENT gets 403 (route-level `requireRole`).
+
+**State jump prevention:**
+- `PLANNED → DEPLOYED` (bypassing QA gate) returns 403.
+- PM cannot deploy without QA sign-off (`READY` status required first).
+
+### 20.4 Tests Added / Updated
+
+File: [`backend/test/security/bug-release-permission-matrix.test.ts`](file:///c:/Users/Haider%20Ali/Desktop/DeliveryOS/backend/test/security/bug-release-permission-matrix.test.ts)
+
+**34 tests across 5 sections:**
+
+| Section | Tests |
+|---|---|
+| Bug Permissions & State Machine Gates | 11 |
+| Release Permissions & State Machine Gates | 8 |
+| Client Portal Post-Deployment Restrictions | 4 |
+| QA Reject & Reopen Cycle | 5 |
+| Developer & Cross-Org Release Access Restrictions | 6 |
+
+**New test coverage added in this phase:**
+- QA reopen/reject full cycle (READY_FOR_RETEST → REOPENED → IN_PROGRESS → READY_FOR_RETEST → CLOSED)
+- QA cannot jump TRIAGED → CLOSED (invalid state jump)
+- Developer cannot update release status (403)
+- Developer cannot access a release from another org (404)
+- Client can view DEPLOYED releases (200)
+- Client cannot view PLANNED/IN_PROGRESS releases (filtered to empty)
+- Client cannot access in-progress release by direct ID (404)
+- Client from Org B cannot access Org A deployed release by ID (404)
+
+### 20.5 Verification Checklist (Phase 3)
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` (backend) | ✅ clean |
+| `npx tsc --noEmit` (frontend) | ✅ clean |
+| `npx vitest run` (backend, all 18 files) | ✅ **166/166** |
+| `bug-release-permission-matrix.test.ts` | ✅ **34/34** |
+| Client portal shows deployed state correctly | ✅ implemented |
+| Client bug report form sends `description` | ✅ fixed |
+| Backend blocks client planning on deployed project | ✅ tested |
+| Backend blocks developer from closing bugs | ✅ tested |
+| Backend blocks QA from deploying | ✅ tested |
+| Backend blocks state jumps (e.g. OPEN→IN_PROGRESS) | ✅ tested |
+| Client release list filtered to deployed-only | ✅ tested |
+| Cross-org release isolation (dev, client B) | ✅ tested |
+| Fixer self-verification prevention | ✅ tested |
+| Supabase-dependent paths | ⚠️ unverifiable in this environment |

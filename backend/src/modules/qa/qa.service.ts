@@ -20,32 +20,11 @@ import {
   PaginationQueryInput,
 } from '@deliveryos/shared';
 
-// Valid lifecycle moves (closed bug states can only be reopened/opened later).
-const BUG_TRANSITIONS: Record<BugStatus, readonly BugStatus[]> = {
-  [BugStatus.OPEN]: [BugStatus.TRIAGED, BugStatus.IN_PROGRESS, BugStatus.REOPENED, BugStatus.WONT_FIX],
-  [BugStatus.TRIAGED]: [BugStatus.OPEN, BugStatus.IN_PROGRESS, BugStatus.REOPENED, BugStatus.WONT_FIX],
-  [BugStatus.IN_PROGRESS]: [BugStatus.READY_FOR_RETEST, BugStatus.FIXED, BugStatus.REOPENED],
-  [BugStatus.FIXED]: [BugStatus.READY_FOR_RETEST, BugStatus.CLOSED, BugStatus.REOPENED],
-  [BugStatus.READY_FOR_RETEST]: [BugStatus.CLOSED, BugStatus.FIXED, BugStatus.REOPENED],
-  [BugStatus.REOPENED]: [BugStatus.TRIAGED, BugStatus.IN_PROGRESS, BugStatus.WONT_FIX],
-  [BugStatus.CLOSED]: [BugStatus.REOPENED, BugStatus.OPEN],
-  [BugStatus.WONT_FIX]: [BugStatus.REOPENED, BugStatus.OPEN, BugStatus.CLOSED],
-};
-
-// Which roles may move a bug INTO each status. SUPER_ADMIN / ADMIN / PROJECT_MANAGER
-// may perform any legal transition.
-const BUG_STATUS_ENTRY_GATES: Record<BugStatus, readonly UserRole[]> = {
-  [BugStatus.OPEN]: [UserRole.QA, UserRole.DEVELOPER],
-  [BugStatus.TRIAGED]: [UserRole.QA],
-  [BugStatus.IN_PROGRESS]: [UserRole.QA, UserRole.DEVELOPER],
-  [BugStatus.FIXED]: [UserRole.DEVELOPER, UserRole.QA],
-  [BugStatus.READY_FOR_RETEST]: [UserRole.DEVELOPER, UserRole.QA],
-  [BugStatus.REOPENED]: [UserRole.QA, UserRole.DEVELOPER],
-  [BugStatus.CLOSED]: [UserRole.QA],
-  [BugStatus.WONT_FIX]: [UserRole.QA],
-};
-
-const STAFF_WITH_FULL_BUG_CONTROL = [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER];
+import {
+  BUG_TRANSITIONS,
+  BUG_STATUS_ENTRY_GATES,
+  STAFF_WITH_FULL_BUG_CONTROL,
+} from './bug-transitions';
 
 export class QaService {
   /**
@@ -302,6 +281,11 @@ export class QaService {
       throw AppError.forbidden('Clients cannot assign internal staff to bugs');
     }
 
+    // Developers may not arbitrarily triage/assign bugs to other users.
+    if (actor.role === UserRole.DEVELOPER && input.assigneeId && input.assigneeId !== actor.id) {
+      throw AppError.forbidden('Developers cannot assign bugs to other users');
+    }
+
     const project = await prisma.project.findFirst({
       where: { id: input.projectId, deletedAt: null },
     });
@@ -434,6 +418,16 @@ export class QaService {
       const gate = BUG_STATUS_ENTRY_GATES[input.status];
       if (!gate || !gate.includes(actor.role as any)) {
         throw AppError.forbidden(`Your role cannot move a bug to ${input.status}`);
+      }
+    }
+
+    // Developers and fixer assignees cannot QA-verify their own fix.
+    if (input.status === BugStatus.CLOSED) {
+      if (actor.role === UserRole.DEVELOPER) {
+        throw AppError.forbidden('Developers cannot perform QA verification');
+      }
+      if (bug.assigneeId === actor.id && !STAFF_WITH_FULL_BUG_CONTROL.includes(actor.role as any)) {
+        throw AppError.forbidden('Cannot QA-verify your own fix');
       }
     }
 
@@ -613,6 +607,11 @@ export class QaService {
       }),
       prisma.bug.count({ where }),
     ]);
+
+    if (actor.role === UserRole.CLIENT) {
+      const sanitized = bugs.map(({ environment, ...rest }: any) => rest);
+      return { bugs: sanitized, total, page, pageSize, totalPages: Math.ceil(total / pageSize) };
+    }
 
     return { bugs, total, page, pageSize, totalPages: Math.ceil(total / pageSize) };
   }
