@@ -257,13 +257,43 @@ export class InvoiceService {
           },
         });
         if (unpaidInvoicesCount === 0) {
-          await tx.project.update({
-            where: { id: invoice.projectId },
-            data: {
-              status: ProjectStatus.COMPLETED,
-              completedAt: new Date(),
+          const deployedReleaseCount = await tx.release.count({
+            where: { projectId: invoice.projectId, status: 'DEPLOYED', deletedAt: null },
+          });
+          const totalReqs = await tx.requirement.count({
+            where: { projectId: invoice.projectId, deletedAt: null },
+          });
+          const completedReqs = await tx.requirement.count({
+            where: {
+              projectId: invoice.projectId,
+              status: { in: ['COMPLETED', 'APPROVED'] },
+              deletedAt: null,
             },
           });
+
+          const isDeployedOrScopeFinished =
+            deployedReleaseCount > 0 || (totalReqs > 0 && totalReqs === completedReqs);
+
+          if (isDeployedOrScopeFinished) {
+            await tx.project.update({
+              where: { id: invoice.projectId },
+              data: {
+                status: ProjectStatus.COMPLETED,
+                completedAt: new Date(),
+              },
+            });
+          } else {
+            const proj = await tx.project.findUnique({
+              where: { id: invoice.projectId },
+              select: { status: true },
+            });
+            if (proj?.status === ProjectStatus.PLANNING) {
+              await tx.project.update({
+                where: { id: invoice.projectId },
+                data: { status: ProjectStatus.ACTIVE },
+              });
+            }
+          }
         }
       }
 

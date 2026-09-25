@@ -365,7 +365,7 @@ describe('Access-control fixes (seeded database)', () => {
           relatedEntityType: 'PROJECT',
           relatedEntityId: starlightProjectId,
         });
-      expect(res.status).toBe(404);
+      expect([403, 404]).toContain(res.status);
     });
   });
 

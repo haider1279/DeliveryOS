@@ -7,7 +7,6 @@ import {
   Bug,
   Rocket,
   Receipt,
-  FileUp,
   Activity,
   Plus,
   Calendar,
@@ -677,7 +676,7 @@ export const ProjectWorkspace: React.FC = () => {
     { id: 'qa', label: 'QA & Bugs', icon: Bug },
     { id: 'releases', label: 'Releases', icon: Rocket },
     ...(canViewFinance ? [{ id: 'finance', label: 'Finance & Invoices', icon: Receipt }] : []),
-    { id: 'files', label: 'Files', icon: FileUp },
+    { id: 'files', label: 'Files', icon: Paperclip },
     { id: 'activity', label: 'Activity Timeline', icon: Activity },
   ];
 
@@ -1277,9 +1276,9 @@ export const ProjectWorkspace: React.FC = () => {
           <h3 className="text-sm font-bold text-slate-800">Project Files</h3>
           {files.length === 0 ? (
             <EmptyState
-              icon={FileUp}
-              title="No files uploaded"
-              description="Documents, evidence, and attachments for this project appear here."
+              icon={Paperclip}
+              title="No files attached"
+              description="File uploads are disabled in DeliveryOS."
             />
           ) : (
             <div className="bg-white rounded-2xl border border-slate-200/80 divide-y divide-slate-100">

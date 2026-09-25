@@ -34,6 +34,16 @@ export const ClientPortalLayout: React.FC = () => {
     fetchNotifications();
   }, []);
 
+  const handleMarkAllRead = async () => {
+    try {
+      await api.post('/notifications/read-all');
+      setUnreadCount(0);
+      setNotifications((prev) => prev.map((n) => ({ ...n, readAt: new Date().toISOString() })));
+    } catch {
+      // ignore
+    }
+  };
+
   const handleOpenNotification = async (n: any) => {
     try {
       if (!n.readAt) {
@@ -117,8 +127,16 @@ export const ClientPortalLayout: React.FC = () => {
 
             {showNotifications && (
               <div className="absolute right-0 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-xl bg-white shadow-xl border border-slate-200 z-50 overflow-hidden">
-                <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/50">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50/50">
                   <span className="text-xs font-semibold text-slate-800">Notifications</span>
+                  {unreadCount > 0 && (
+                    <button
+                      onClick={handleMarkAllRead}
+                      className="text-[11px] text-indigo-600 hover:text-indigo-700 font-medium"
+                    >
+                      Mark all as read
+                    </button>
+                  )}
                 </div>
                 <div className="max-h-80 overflow-y-auto divide-y divide-slate-50">
                   {notifications.length === 0 ? (

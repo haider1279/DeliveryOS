@@ -11,9 +11,7 @@ import { config } from '../../config';
 // returns 501 NOT_IMPLEMENTED rather than leaking a public URL.
 export class StorageService {
   async createFileAsset(input: RegisterFileInput, actor: AuthenticatedUser) {
-    if (actor.role === UserRole.CLIENT) {
-      throw AppError.forbidden('Clients cannot upload files');
-    }
+    throw AppError.forbidden('File uploads are disabled in DeliveryOS');
 
     if (input.projectId) {
       await assertProjectWritable(actor, input.projectId);

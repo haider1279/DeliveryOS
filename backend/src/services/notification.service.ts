@@ -1,4 +1,5 @@
 import { prisma } from '../config/prisma';
+import { AppError } from '../errors/AppError';
 import { NotificationType, CommentVisibility } from '@deliveryos/shared';
 
 interface NotificationPayload {
@@ -63,8 +64,14 @@ export const notificationService = {
   },
 
   async markAsRead(id: string, userId: string) {
-    return prisma.notification.updateMany({
+    const notification = await prisma.notification.findFirst({
       where: { id, userId },
+    });
+    if (!notification) {
+      throw AppError.notFound('Notification not found');
+    }
+    return prisma.notification.update({
+      where: { id },
       data: { readAt: new Date() },
     });
   },

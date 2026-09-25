@@ -108,6 +108,18 @@ describe('Post-Payment Project Lifecycle & Global Status Synchronization', () =>
         { projectId: testProject.id, userId: qaUser.id, membershipRole: 'QA' },
       ],
     });
+
+    // Create a deployed release on the test project
+    await prisma.release.create({
+      data: {
+        projectId: testProject.id,
+        version: '1.0.0',
+        name: 'Initial Release',
+        status: ReleaseStatus.DEPLOYED,
+        deployedAt: new Date(),
+        createdById: pmUser.id,
+      },
+    });
   });
 
   afterAll(async () => {
