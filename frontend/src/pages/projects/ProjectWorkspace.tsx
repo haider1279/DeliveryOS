@@ -32,6 +32,7 @@ import { PriorityBadge } from '../../components/ui/PriorityBadge';
 import { Modal } from '../../components/ui/Modal';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { PlanReleaseModal } from './components/PlanReleaseModal';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { UserRole, RequirementStatus, TaskStatus, BugStatus, ReleaseStatus, CommentVisibility, ReleaseItemType } from '@deliveryos/shared';
@@ -104,8 +105,6 @@ export const ProjectWorkspace: React.FC = () => {
   const [bugActual, setBugActual] = useState('');
   const [bugSeverity, setBugSeverity] = useState('MEDIUM');
 
-  const [relVersion, setRelVersion] = useState('1.0.0');
-  const [relName, setRelName] = useState('MVP Launch');
 
   const [invNumber, setInvNumber] = useState(`INV-${Date.now().toString().slice(-6)}`);
   const [invAmount, setInvAmount] = useState('5000');
@@ -130,8 +129,6 @@ export const ProjectWorkspace: React.FC = () => {
 
   // Release modal state
   const [relSelectedReqs, setRelSelectedReqs] = useState<string[]>([]);
-  const [relReleaseNotes, setRelReleaseNotes] = useState('');
-  const [relDeploymentNotes, setRelDeploymentNotes] = useState('');
 
   // Invoice / payment modal state
   const [invNotes, setInvNotes] = useState('');
@@ -177,8 +174,12 @@ export const ProjectWorkspace: React.FC = () => {
         setTestCases(tcRes?.testCases || tcRes || []);
         setBugs(bugRes?.bugs || bugRes || []);
       } else if (activeTab === 'releases') {
-        const res: any = await api.get('/releases', { projectId: id });
-        setReleases(res?.releases || res || []);
+        const [relRes, reqRes]: [any, any] = await Promise.all([
+          api.get('/releases', { projectId: id }),
+          api.get('/requirements', { projectId: id, pageSize: 100 }),
+        ]);
+        setReleases(relRes?.releases || relRes || []);
+        setRequirements(reqRes?.items || reqRes || []);
       } else if (activeTab === 'finance') {
         const [invRes, profRes]: [any, any] = await Promise.all([
           api.get('/invoices', { projectId: id }),
@@ -513,41 +514,9 @@ export const ProjectWorkspace: React.FC = () => {
 
   // ---- Releases ----
 
-  const openReleaseModal = (reqIds: string[]) => {
+  const openReleaseModal = (reqIds?: string[]) => {
     setRelSelectedReqs(reqIds || []);
     setIsReleaseModalOpen(true);
-  };
-
-  const handleCreateRelease = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (relSelectedReqs.length === 0) {
-      toast.error('Select at least one requirement to include in this release');
-      return;
-    }
-    try {
-      await api.post('/releases', {
-        projectId: id,
-        version: relVersion,
-        name: relName,
-        releaseDate: new Date().toISOString(),
-        releaseNotes: relReleaseNotes || undefined,
-        deploymentNotes: relDeploymentNotes || undefined,
-        itemIds: relSelectedReqs.map((rid) => ({
-          itemType: ReleaseItemType.REQUIREMENT,
-          requirementId: rid,
-        })),
-      });
-      setIsReleaseModalOpen(false);
-      setRelVersion('1.0.0');
-      setRelName('MVP Launch');
-      setRelReleaseNotes('');
-      setRelDeploymentNotes('');
-      setRelSelectedReqs([]);
-      toast.success('Release planned');
-      fetchTabData();
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to plan release');
-    }
   };
 
   const handleReleaseStatus = async (releaseId: string, status: string) => {
@@ -1183,8 +1152,8 @@ export const ProjectWorkspace: React.FC = () => {
             <h3 className="text-sm font-bold text-slate-800">Release Planning</h3>
             {canManage && (
               <button
-                onClick={() => openReleaseModal(requirements.filter((r) => r.status === 'COMPLETED' || r.status === 'CLIENT_REVIEW' || r.status === 'QA' || r.status === 'IN_DEVELOPMENT').map((r) => r.id))}
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700"
+                onClick={() => openReleaseModal()}
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700 shadow-2xs transition-colors"
               >
                 <Plus className="h-3.5 w-3.5" /> Plan Release
               </button>
@@ -1192,11 +1161,22 @@ export const ProjectWorkspace: React.FC = () => {
           </div>
 
           {releases.length === 0 ? (
-            <EmptyState
-              icon={Rocket}
-              title="No releases planned"
-              description="Group completed work into versioned releases."
-            />
+            <div className="bg-white rounded-2xl border border-slate-200/80 p-8 text-center space-y-4 shadow-2xs">
+              <EmptyState
+                icon={Rocket}
+                title="No releases planned"
+                description="Group completed work into versioned releases to coordinate testing and client deployments."
+              />
+              {canManage && (
+                <button
+                  type="button"
+                  onClick={() => openReleaseModal()}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700 shadow-xs transition-colors"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Plan First Release
+                </button>
+              )}
+            </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {releases.map((rel) => {
@@ -1873,100 +1853,14 @@ export const ProjectWorkspace: React.FC = () => {
         </form>
       </Modal>
 
-      {/* Release Modal */}
-      <Modal
+      {/* Plan Release Modal */}
+      <PlanReleaseModal
         isOpen={isReleaseModalOpen}
         onClose={() => setIsReleaseModalOpen(false)}
-        title="Plan New Release"
-      >
-        <form onSubmit={handleCreateRelease} className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700">Version</label>
-              <input
-                type="text"
-                placeholder="1.0.0"
-                value={relVersion}
-                onChange={(e) => setRelVersion(e.target.value)}
-                className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700">Name</label>
-              <input
-                type="text"
-                value={relName}
-                onChange={(e) => setRelName(e.target.value)}
-                className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-700">Items (select requirements to include)</label>
-            <div className="mt-1 max-h-40 overflow-y-auto border rounded-lg divide-y divide-slate-100">
-              {requirements.map((req) => {
-                const checked = relSelectedReqs.includes(req.id);
-                return (
-                  <label
-                    key={req.id}
-                    className={`flex items-start gap-2 px-3 py-2 cursor-pointer text-xs ${
-                      checked ? 'bg-indigo-50' : ''
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() =>
-                        setRelSelectedReqs((prev) =>
-                          checked ? prev.filter((x) => x !== req.id) : [...prev, req.id]
-                        )
-                      }
-                      className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <span className="text-slate-700">
-                      <StatusBadge status={req.status} />{' '}
-                      <span className="font-semibold">[v{req.currentVersion}] {req.title}</span>
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-700">Release Notes</label>
-            <textarea
-              rows={2}
-              value={relReleaseNotes}
-              onChange={(e) => setRelReleaseNotes(e.target.value)}
-              className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-700">Deployment Notes</label>
-            <textarea
-              rows={2}
-              value={relDeploymentNotes}
-              onChange={(e) => setRelDeploymentNotes(e.target.value)}
-              className="mt-1 w-full px-3 py-2 rounded-lg border text-xs"
-            />
-          </div>
-          <div className="flex justify-end gap-2 pt-3 border-t">
-            <button
-              type="button"
-              onClick={() => setIsReleaseModalOpen(false)}
-              className="px-3 py-1.5 rounded text-xs text-slate-600 hover:bg-slate-100"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-3 py-1.5 rounded text-xs font-semibold bg-brand-600 text-white"
-            >
-              Plan Release
-            </button>
-          </div>
-        </form>
-      </Modal>
+        projectId={id!}
+        onSuccess={fetchTabData}
+        initialSelectedReqIds={relSelectedReqs}
+      />
 
       {/* Invoice Modal */}
       <Modal
