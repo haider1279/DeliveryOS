@@ -4,6 +4,7 @@ import { config } from '../../config';
 import { AppError } from '../../errors/AppError';
 import { auditService } from '../../services/audit.service';
 import { emailService } from '../../services/email.service';
+import { requireQualifiedOrganizationForClient } from '../organizations/organization-eligibility.service';
 import {
   UserRole,
   UserStatus,
@@ -117,6 +118,17 @@ export class UserService {
     });
     if (existing) {
       throw AppError.conflict('User with this email already exists');
+    }
+
+    // docs/workflows.md places the client invitation AFTER the organization has
+    // been qualified ([PROSPECT] -> [APPROVED] -> invite client contact). The
+    // Team Management screen already only offers APPROVED organizations, but the
+    // API did not enforce it, so a CLIENT could be attached to a PROSPECT org —
+    // stranding them in a tenant whose project requests can never be approved.
+    // Enforcing it server-side keeps the pipeline synchronized and strengthens
+    // the rule rather than weakening it.
+    if (input.organizationId) {
+      await requireQualifiedOrganizationForClient(input.organizationId);
     }
 
     // One-time invite token (returned once so the inviter can share it).

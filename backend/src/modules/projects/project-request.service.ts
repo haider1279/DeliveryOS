@@ -2,11 +2,17 @@ import { prisma } from '../../config/prisma';
 import type { Prisma } from '@prisma/client';
 import { AppError } from '../../errors/AppError';
 import { auditService } from '../../services/audit.service';
-import { UserRole, UserStatus, ProjectStatus, ProjectRequestStatus, OrganizationQualificationStatus } from '@deliveryos/shared';
+import { UserRole, UserStatus, ProjectStatus, ProjectRequestStatus } from '@deliveryos/shared';
 import type { CreateProjectRequestDTO, DecideProjectRequestDTO, AuthenticatedUser } from '@deliveryos/shared';
+import { requireQualifiedOrganization } from '../organizations/organization-eligibility.service';
 
 const REQUEST_INCLUDE = {
-  organization: { select: { id: true, name: true, slug: true } },
+  // qualificationStatus travels with the request so the review screen can show
+  // an administrator WHY an approval will be refused, instead of failing with an
+  // opaque error after the fact.
+  organization: {
+    select: { id: true, name: true, slug: true, qualificationStatus: true, status: true },
+  },
   requestedBy: { include: { profile: { select: { firstName: true, lastName: true, displayName: true } } } },
 } as const;
 
@@ -113,12 +119,16 @@ export const projectRequestService = {
       throw new AppError('FORBIDDEN', 'Insufficient permissions to submit project requests', 403);
     }
 
-    const org = await prisma.organization.findFirst({
-      where: { id: targetOrgId, deletedAt: null },
-    });
-    if (!org) {
-      throw new AppError('NOT_FOUND', 'Organization not found', 404);
-    }
+    // The target organization must already be qualified. A request raised for an
+    // organization that has not been through qualification can NEVER be approved
+    // (approval creates a real project, which requires an APPROVED organization),
+    // so accepting it would only create a permanently stuck record. Failing here
+    // keeps the pipeline synchronized: the request is always created against an
+    // organization that the documented approval step can actually act on.
+    const org = await requireQualifiedOrganization(
+      targetOrgId,
+      'Submitting a project request'
+    );
 
     const request = await prisma.projectRequest.create({
       data: {
@@ -267,25 +277,10 @@ export const projectRequestService = {
     // Resolve everything an approval needs BEFORE mutating anything, so a
     // validation failure can never leave a half-approved request behind.
     if (dto.decision === ProjectRequestStatus.APPROVED) {
-      const org = await prisma.organization.findFirst({
-        where: { id: request.organizationId, deletedAt: null },
-      });
-      if (!org) {
-        throw new AppError('NOT_FOUND', 'Organization not found', 404);
-      }
-      if (org.status === 'INACTIVE') {
-        throw new AppError('FORBIDDEN', 'This organization is inactive and cannot accept new projects', 403);
-      }
-      if (
-        org.qualificationStatus &&
-        org.qualificationStatus !== OrganizationQualificationStatus.APPROVED
-      ) {
-        throw new AppError(
-          'BUSINESS_RULE_VIOLATION',
-          'Projects can only be created for qualified and approved organizations',
-          400
-        );
-      }
+      // Single source of truth for the qualification rule. Approving a request
+      // materialises a real project, so the organization must satisfy exactly
+      // the same precondition as the manual "New Project" flow.
+      await requireQualifiedOrganization(request.organizationId, 'Approving a project request');
     }
 
     let project: Awaited<ReturnType<typeof prisma.project.create>> | null = null;

@@ -330,19 +330,33 @@ describe('Project request approval -> Active Projects', () => {
   });
 
   it('refuses approval for a non-qualified organization and creates nothing', async () => {
-    const { pm, adminToken, clientToken } = await setup(OrganizationQualificationStatus.PROSPECT);
-    const requestId = await submitRequest(clientToken);
+    // Simulates legacy/stale data: a request that exists against an organization
+    // which never went through qualification. The request row is written
+    // directly so the approval gate itself is what is under test.
+    const { org, pm, adminToken } = await setup(OrganizationQualificationStatus.PROSPECT);
+    const seeded = await prisma.projectRequest.create({
+      data: {
+        organizationId: org.id,
+        requestedById: createdUserIds[0],
+        name: `Stale request ${unique()}`,
+        status: ProjectRequestStatus.PENDING,
+      },
+    });
 
-    const res = await decide(requestId, adminToken, {
+    const res = await decide(seeded.id, adminToken, {
       decision: ProjectRequestStatus.APPROVED,
       projectManagerId: pm.id,
     });
     expect(res.status).toBe(400);
     expect(res.body.success).toBe(false);
+    // The error must name the organization and the step that unblocks it.
+    expect(res.body.error.message).toContain(org.name);
+    expect(res.body.error.message.toLowerCase()).toContain('qualif');
 
     // The request must be left untouched and no project created.
-    const stored = await prisma.projectRequest.findUnique({ where: { id: requestId } });
+    const stored = await prisma.projectRequest.findUnique({ where: { id: seeded.id } });
     expect(stored?.status).toBe(ProjectRequestStatus.PENDING);
     expect(stored?.projectId).toBeNull();
+    expect(await prisma.project.count({ where: { organizationId: org.id } })).toBe(0);
   });
 });

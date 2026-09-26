@@ -5,6 +5,7 @@ import { activityService } from '../../services/notification.service';
 import { UserRole, UserStatus, CommentVisibility, ProjectStatus, InvoiceStatus, OrganizationQualificationStatus } from '@deliveryos/shared';
 import type { CreateProjectDTO, UpdateProjectDTO, AddProjectMemberDTO, AuthenticatedUser } from '@deliveryos/shared';
 import { requireProjectAccess, getAccessibleProjectIds, assertProjectWritable } from '../../services/project-access.service';
+import { requireQualifiedOrganization } from '../organizations/organization-eligibility.service';
 
 export async function syncProjectStatus(projectId: string, db: any = prisma): Promise<ProjectStatus | null> {
   const project = await db.project.findUnique({
@@ -75,17 +76,11 @@ export const projectService = {
 
     // Only trust ids that actually resolve to a live organization and an
     // active project manager — never silently accept arbitrary ids.
-    const [org, pm] = await Promise.all([
-      prisma.organization.findFirst({ where: { id: dto.organizationId, deletedAt: null } }),
-      prisma.user.findFirst({ where: { id: dto.projectManagerId, role: UserRole.PROJECT_MANAGER } }),
-    ]);
-    if (!org) throw new AppError('NOT_FOUND', 'Organization not found', 404);
-    if (org.status === 'INACTIVE') {
-      throw new AppError('FORBIDDEN', 'This organization is inactive and cannot accept new projects', 403);
-    }
-    if (org.qualificationStatus && org.qualificationStatus !== OrganizationQualificationStatus.APPROVED) {
-      throw new AppError('BUSINESS_RULE_VIOLATION', 'Projects can only be created for qualified and approved organizations', 400);
-    }
+    // The organization qualification rule lives in
+    // organization-eligibility.service so the manual "New Project" flow and the
+    // client project-request approval flow cannot drift apart.
+    const org = await requireQualifiedOrganization(dto.organizationId, 'Creating a project');
+    const pm = await prisma.user.findFirst({ where: { id: dto.projectManagerId, role: UserRole.PROJECT_MANAGER } });
     if (!pm || pm.status !== UserStatus.ACTIVE) {
       throw new AppError('BUSINESS_RULE_VIOLATION', 'Project manager must be an active PROJECT_MANAGER user', 400);
     }

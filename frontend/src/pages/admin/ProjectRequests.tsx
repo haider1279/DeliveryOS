@@ -21,7 +21,7 @@ import { Modal } from '../../components/ui/Modal';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
-import { UserRole, ProjectRequestStatus } from '@deliveryos/shared';
+import { UserRole, ProjectRequestStatus, OrganizationQualificationStatus } from '@deliveryos/shared';
 
 interface ProjectRequestItem {
   id: string;
@@ -37,6 +37,8 @@ interface ProjectRequestItem {
     id: string;
     name: string;
     slug?: string;
+    qualificationStatus?: OrganizationQualificationStatus | null;
+    status?: string;
   } | null;
   requestedBy?: {
     id: string;
@@ -78,6 +80,27 @@ interface ProjectManagerOption {
   role: UserRole;
   profile?: { firstName?: string | null; lastName?: string | null; displayName?: string | null } | null;
 }
+
+/**
+ * Approving a request creates the real Project, which the server only allows for
+ * a qualified and approved organization (docs/workflows.md). Say so up front so
+ * the reviewer is never left with an opaque failure after clicking Approve.
+ */
+const qualificationBlocker = (request: ProjectRequestItem): string | null => {
+  const org = request.organization;
+  if (!org) return null;
+  const state = org.qualificationStatus;
+  if (state === OrganizationQualificationStatus.REJECTED) {
+    return `${org.name} was rejected during qualification, so it cannot receive projects.`;
+  }
+  if (state === OrganizationQualificationStatus.PROSPECT) {
+    return `${org.name} is not qualified yet. Qualify it in BD Leads before approving.`;
+  }
+  if (org.status === 'INACTIVE') {
+    return `${org.name} is inactive and cannot accept new projects.`;
+  }
+  return null;
+};
 
 export const ProjectRequests: React.FC<{ onDecisionComplete?: () => void }> = ({ onDecisionComplete }) => {
   const { user } = useAuth();
@@ -291,6 +314,13 @@ export const ProjectRequests: React.FC<{ onDecisionComplete?: () => void }> = ({
                     </div>
                   )}
 
+                  {qualificationBlocker(req) && (
+                    <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] font-medium text-amber-800">
+                      <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 mt-px" />
+                      <span>{qualificationBlocker(req)}</span>
+                    </div>
+                  )}
+
                   {req.requestedBy && (
                     <div className="flex items-center gap-2">
                       <UserIcon className="h-3.5 w-3.5 text-slate-400 flex-shrink-0" />
@@ -348,7 +378,9 @@ export const ProjectRequests: React.FC<{ onDecisionComplete?: () => void }> = ({
                   <>
                     <button
                       onClick={() => openConfirm(req, 'APPROVED')}
-                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors shadow-xs"
+                      disabled={Boolean(qualificationBlocker(req))}
+                      title={qualificationBlocker(req) ?? undefined}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors shadow-xs disabled:bg-slate-300 disabled:cursor-not-allowed disabled:shadow-none"
                     >
                       <Check className="h-3.5 w-3.5" />
                       Approve
@@ -461,7 +493,9 @@ export const ProjectRequests: React.FC<{ onDecisionComplete?: () => void }> = ({
                     setShowDetailModal(false);
                     openConfirm(selectedRequest, 'APPROVED');
                   }}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition-colors"
+                  disabled={Boolean(qualificationBlocker(selectedRequest))}
+                  title={qualificationBlocker(selectedRequest) ?? undefined}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed"
                 >
                   Approve Request
                 </button>
