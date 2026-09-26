@@ -12,14 +12,47 @@ import { useAuth } from '../../context/AuthContext';
 import { CommentVisibility, TaskStatus, UserRole } from '@deliveryos/shared';
 
 const TASK_STATUS_OPTIONS: Record<string, TaskStatus[]> = {
-  [TaskStatus.TODO]: [TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED, TaskStatus.CANCELLED],
-  [TaskStatus.IN_PROGRESS]: [TaskStatus.CODE_REVIEW, TaskStatus.BLOCKED, TaskStatus.DONE, TaskStatus.CANCELLED],
-  [TaskStatus.CODE_REVIEW]: [TaskStatus.READY_FOR_QA, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED, TaskStatus.DONE, TaskStatus.CANCELLED],
-  [TaskStatus.BLOCKED]: [TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED],
-  [TaskStatus.READY_FOR_QA]: [TaskStatus.DONE, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED],
-  [TaskStatus.DONE]: [TaskStatus.IN_PROGRESS, TaskStatus.TODO, TaskStatus.CANCELLED],
-  [TaskStatus.CANCELLED]: [TaskStatus.TODO, TaskStatus.IN_PROGRESS],
+  // Developer-owned progress
+  [TaskStatus.TODO]:         [TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED],
+  [TaskStatus.IN_PROGRESS]:  [TaskStatus.READY_FOR_QA, TaskStatus.CODE_REVIEW, TaskStatus.BLOCKED],
+  [TaskStatus.CODE_REVIEW]:  [TaskStatus.READY_FOR_QA, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED],
+  [TaskStatus.BLOCKED]:      [TaskStatus.IN_PROGRESS],
+  [TaskStatus.BUG_REPORTED]: [TaskStatus.IN_PROGRESS],
+  // QA-owned corridor — these only appear for QA/manager actors
+  [TaskStatus.READY_FOR_QA]: [TaskStatus.TESTING, TaskStatus.IN_PROGRESS],
+  [TaskStatus.TESTING]:      [TaskStatus.DONE, TaskStatus.BUG_REPORTED],
+  // Re-open (managers only in practice)
+  [TaskStatus.DONE]:         [TaskStatus.IN_PROGRESS],
+  [TaskStatus.CANCELLED]:    [TaskStatus.IN_PROGRESS],
 };
+
+/**
+ * Returns the status options a specific role may choose from for a given
+ * current status. The current status is always included as the first option
+ * (so the select renders the current value correctly).
+ */
+function getStatusOptionsForRole(currentStatus: string, role: UserRole | undefined): string[] {
+  if (!role) return [currentStatus];
+
+  const base = TASK_STATUS_OPTIONS[currentStatus] ?? [];
+
+  // QA can only move within the QA corridor; developers cannot enter it.
+  if (role === UserRole.DEVELOPER) {
+    const devAllowed: TaskStatus[] = [
+      TaskStatus.IN_PROGRESS, TaskStatus.CODE_REVIEW,
+      TaskStatus.READY_FOR_QA, TaskStatus.BLOCKED,
+    ];
+    return [currentStatus, ...base.filter((s) => devAllowed.includes(s))];
+  }
+  if (role === UserRole.QA) {
+    const qaAllowed: TaskStatus[] = [
+      TaskStatus.TESTING, TaskStatus.DONE, TaskStatus.BUG_REPORTED, TaskStatus.IN_PROGRESS,
+    ];
+    return [currentStatus, ...base.filter((s) => qaAllowed.includes(s))];
+  }
+  // Managers see all options for a given state
+  return [currentStatus, ...base];
+}
 
 export const WorkQueueSection: React.FC = () => {
   const toast = useToast();
@@ -62,7 +95,7 @@ export const WorkQueueSection: React.FC = () => {
   }, [fetchMyWork]);
 
   const handleUpdateStatus = async (taskId: string, status: string) => {
-    if (user?.role === UserRole.QA || updatingTaskId) return;
+    if (updatingTaskId) return;
     setUpdatingTaskId(taskId);
     try {
       await api.patch(`/tasks/${taskId}`, { status });
@@ -156,14 +189,9 @@ export const WorkQueueSection: React.FC = () => {
   const visibleTasks = activeTasks.filter(
     (t: any) => t.status !== 'DONE' && t.status !== 'CANCELLED'
   );
-  const canUpdateTaskStatus = user?.role !== UserRole.QA;
-  const getTaskStatusOptions = (status: string): string[] => {
-    if (!canUpdateTaskStatus) return [status];
-    const options = TASK_STATUS_OPTIONS[status] || [status];
-    return user?.role === UserRole.DEVELOPER
-      ? options.filter((option) => option !== TaskStatus.CANCELLED)
-      : options;
-  };
+  const canUpdateTaskStatus = user?.role !== UserRole.CLIENT;
+  const getTaskStatusOptions = (status: string): string[] =>
+    getStatusOptionsForRole(status, user?.role as UserRole | undefined);
 
   return (
     <div className="space-y-8">

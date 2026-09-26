@@ -303,10 +303,41 @@ export const ProjectWorkspace: React.FC = () => {
 
   const canViewFinance = canManage;
 
-  // QA cannot create/edit development tasks (backend enforces this too).
-  const canCreateTask =
-    canManage || user?.role === UserRole.DEVELOPER;
-  const canUpdateTask = canCreateTask;
+  // QA can now update task status (within their own gates). Developers can too.
+  // Neither can create tasks — that remains manager/developer only.
+  const canCreateTask = canManage || user?.role === UserRole.DEVELOPER;
+  const canUpdateTask = canCreateTask || user?.role === UserRole.QA;
+
+  /**
+   * Returns the status options a role may pick from the current status.
+   * Current status is always prepended so the <select> renders correctly.
+   */
+  function getTaskStatusOptionsForRole(currentStatus: string, role: UserRole | undefined): string[] {
+    const TRANSITIONS_BY_ROLE: Record<string, string[]> = {
+      [TaskStatus.TODO]:         ['IN_PROGRESS', 'BLOCKED'],
+      [TaskStatus.IN_PROGRESS]:  ['READY_FOR_QA', 'CODE_REVIEW', 'BLOCKED'],
+      [TaskStatus.CODE_REVIEW]:  ['READY_FOR_QA', 'IN_PROGRESS', 'BLOCKED'],
+      [TaskStatus.BLOCKED]:      ['IN_PROGRESS'],
+      [TaskStatus.BUG_REPORTED]: ['IN_PROGRESS'],
+      [TaskStatus.READY_FOR_QA]: ['TESTING', 'IN_PROGRESS'],
+      [TaskStatus.TESTING]:      ['DONE', 'BUG_REPORTED'],
+      [TaskStatus.DONE]:         ['IN_PROGRESS'],
+      [TaskStatus.CANCELLED]:    ['IN_PROGRESS'],
+    };
+    const DEV_ALLOWED = new Set(['IN_PROGRESS', 'CODE_REVIEW', 'READY_FOR_QA', 'BLOCKED']);
+    const QA_ALLOWED  = new Set(['TESTING', 'DONE', 'BUG_REPORTED', 'IN_PROGRESS']);
+
+    const next = TRANSITIONS_BY_ROLE[currentStatus] ?? [];
+    let filtered: string[];
+    if (role === UserRole.DEVELOPER) {
+      filtered = next.filter((s) => DEV_ALLOWED.has(s));
+    } else if (role === UserRole.QA) {
+      filtered = next.filter((s) => QA_ALLOWED.has(s));
+    } else {
+      filtered = next; // managers see all transitions
+    }
+    return [currentStatus, ...filtered];
+  }
 
   const handleCreateRequirement = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1083,12 +1114,9 @@ export const ProjectWorkspace: React.FC = () => {
                           aria-label={`Status for task: ${t.title}`}
                           className="text-[11px] font-semibold bg-slate-50 border border-slate-200 rounded px-2 py-0.5 focus:outline-none"
                         >
-                          <option value="TODO">TODO</option>
-                          <option value="IN_PROGRESS">IN PROGRESS</option>
-                          <option value="CODE_REVIEW">CODE REVIEW</option>
-                          <option value="BLOCKED">BLOCKED</option>
-                          <option value="READY_FOR_QA">READY FOR QA</option>
-                          <option value="DONE">DONE</option>
+                          {getTaskStatusOptionsForRole(t.status, user?.role as UserRole).map((s) => (
+                            <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
+                          ))}
                         </select>
                       ) : (
                         <StatusBadge status={t.status} />

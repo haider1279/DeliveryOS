@@ -17,20 +17,63 @@ import {
 } from '@deliveryos/shared';
 import { requireProjectAccess, getAccessibleProjectIds, assertProjectWritable } from '../../services/project-access.service';
 
-// Allowed forward/back movements in the task workflow. Reopening a finished
-// task (DONE/CANCELLED) is allowed so work can resume after a mistake.
+// ---------------------------------------------------------------------------
+// Task workflow state machine
+// ---------------------------------------------------------------------------
+//
+// The state machine is intentionally split into two tables:
+//
+//   TASK_TRANSITIONS   — which status can follow which (structural validity)
+//   TASK_ROLE_GATES    — which roles are permitted to enter each status
+//
+// Both checks are applied on every status change so neither can be bypassed
+// by a direct API call with a crafted role claim.
+
+/**
+ * Structural transitions: every arrow in the task lifecycle graph.
+ * A transition that does not appear here is invalid regardless of role.
+ */
 const TASK_TRANSITIONS: Record<TaskStatus, readonly TaskStatus[]> = {
-  [TaskStatus.TODO]: [TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED, TaskStatus.CANCELLED],
-  [TaskStatus.IN_PROGRESS]: [TaskStatus.CODE_REVIEW, TaskStatus.BLOCKED, TaskStatus.DONE, TaskStatus.CANCELLED],
-  [TaskStatus.CODE_REVIEW]: [TaskStatus.READY_FOR_QA, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED, TaskStatus.DONE, TaskStatus.CANCELLED],
-  [TaskStatus.BLOCKED]: [TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED],
-  [TaskStatus.READY_FOR_QA]: [TaskStatus.DONE, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED],
-  [TaskStatus.DONE]: [TaskStatus.IN_PROGRESS, TaskStatus.TODO, TaskStatus.CANCELLED],
-  [TaskStatus.CANCELLED]: [TaskStatus.TODO, TaskStatus.IN_PROGRESS],
+  [TaskStatus.TODO]:         [TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED, TaskStatus.CANCELLED],
+  [TaskStatus.IN_PROGRESS]:  [TaskStatus.CODE_REVIEW, TaskStatus.READY_FOR_QA, TaskStatus.BLOCKED, TaskStatus.CANCELLED],
+  [TaskStatus.CODE_REVIEW]:  [TaskStatus.READY_FOR_QA, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED, TaskStatus.CANCELLED],
+  [TaskStatus.BLOCKED]:      [TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED],
+  [TaskStatus.READY_FOR_QA]: [TaskStatus.TESTING, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED],
+  [TaskStatus.TESTING]:      [TaskStatus.DONE, TaskStatus.BUG_REPORTED],
+  [TaskStatus.BUG_REPORTED]: [TaskStatus.IN_PROGRESS],
+  [TaskStatus.DONE]:         [TaskStatus.IN_PROGRESS, TaskStatus.TODO, TaskStatus.CANCELLED],
+  [TaskStatus.CANCELLED]:    [TaskStatus.TODO, TaskStatus.IN_PROGRESS],
 };
 
-// Developers drive active-status changes but cannot cancel their own work or
-// self-close straight to DONE from non-code-review states.
+/**
+ * Role entry gates: which roles may move a task INTO a given status.
+ * Roles absent from a status's gate cannot perform that transition.
+ *
+ * Design rules:
+ *  - DEVELOPER drives implementation: TODO→IN_PROGRESS, IN_PROGRESS→READY_FOR_QA.
+ *    A developer CANNOT mark READY_FOR_QA→DONE, cannot create TESTING, cannot
+ *    self-verify through BUG_REPORTED.
+ *  - QA owns the TESTING corridor: READY_FOR_QA→TESTING→DONE|BUG_REPORTED.
+ *    QA also clears the bug-fix cycle: BUG_REPORTED→IN_PROGRESS (re-opens).
+ *  - MANAGER roles (SA/ADMIN/PM) retain override capability on every gate so
+ *    they can unblock any stuck task.
+ */
+const TASK_ROLE_GATES: Partial<Record<TaskStatus, readonly UserRole[]>> = {
+  // Developer-owned forward progress
+  [TaskStatus.IN_PROGRESS]:  [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.DEVELOPER, UserRole.QA],
+  [TaskStatus.CODE_REVIEW]:  [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.DEVELOPER],
+  [TaskStatus.READY_FOR_QA]: [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.DEVELOPER],
+  // QA-owned corridor — Developer is explicitly excluded
+  [TaskStatus.TESTING]:      [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.QA],
+  [TaskStatus.DONE]:         [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.QA],
+  [TaskStatus.BUG_REPORTED]: [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.QA],
+  // Unblocking/admin operations
+  [TaskStatus.TODO]:         [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER],
+  [TaskStatus.BLOCKED]:      [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.DEVELOPER, UserRole.QA],
+  [TaskStatus.CANCELLED]:    [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER],
+};
+
+// Convenience set for status-change permission logic below.
 const MANAGER_ROLES = [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER];
 
 export class TaskService {
@@ -172,12 +215,15 @@ export class TaskService {
       throw AppError.forbidden('Clients cannot edit development tasks');
     }
 
-    // QA cannot edit development tasks; DEVELOPER edits are limited to
-    // workflow/status fields within their own project (never reassignment or
-    // direct actual-hours writes).
-    if (actor.role === UserRole.QA) {
-      throw AppError.forbidden('QA users cannot edit tasks');
+    // QA may only change the task status (within its permitted gates).
+    // All other field edits (title, assignee, hours, etc.) remain manager-only.
+    const isStatusOnlyUpdate =
+      input.status !== undefined &&
+      Object.keys(input).filter((k) => k !== 'status').length === 0;
+    if (actor.role === UserRole.QA && !isStatusOnlyUpdate) {
+      throw AppError.forbidden('QA users can only update task status');
     }
+
     if (actor.role === UserRole.DEVELOPER) {
       if (input.assigneeId !== undefined && input.assigneeId !== task.assigneeId) {
         throw AppError.forbidden('Developers cannot reassign tasks');
@@ -212,22 +258,26 @@ export class TaskService {
 
     // Enforce the workflow state machine when a status change is requested.
     if (input.status !== undefined && input.status !== previousStatus) {
+      // 1. Structural check: is this transition in the graph at all?
       const allowedNext = TASK_TRANSITIONS[previousStatus];
       if (!allowedNext.includes(input.status)) {
-        throw AppError.forbidden(`Cannot move task from ${previousStatus} to ${input.status}`);
+        throw AppError.forbidden(
+          `Cannot move task from ${previousStatus} to ${input.status}`
+        );
       }
-      // Developers may not abandon/cancel work themselves; managers may.
-      if (
-        input.status === TaskStatus.CANCELLED &&
-        actor.role === UserRole.DEVELOPER
-      ) {
-        throw AppError.forbidden('Developers cannot cancel tasks; ask a project manager');
+
+      // 2. Role gate: is this actor's role permitted to enter the target status?
+      const allowedRoles = TASK_ROLE_GATES[input.status];
+      if (allowedRoles && !allowedRoles.includes(actor.role as UserRole)) {
+        throw AppError.forbidden(
+          `Your role (${actor.role}) is not permitted to move a task to ${input.status}`
+        );
       }
     }
 
     const isNowDone = input.status === TaskStatus.DONE && previousStatus !== TaskStatus.DONE;
     const isLeavingFinishedState =
-      (previousStatus === TaskStatus.DONE || previousStatus === TaskStatus.CANCELLED) &&
+      (previousStatus === TaskStatus.DONE || previousStatus === TaskStatus.CANCELLED || previousStatus === TaskStatus.BUG_REPORTED) &&
       input.status !== undefined &&
       input.status !== TaskStatus.DONE &&
       input.status !== TaskStatus.CANCELLED;
