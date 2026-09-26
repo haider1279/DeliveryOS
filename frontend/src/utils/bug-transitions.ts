@@ -8,7 +8,7 @@ export const BUG_TRANSITIONS: Record<BugStatus, readonly BugStatus[]> = {
   [BugStatus.OPEN]: [BugStatus.TRIAGED, BugStatus.WONT_FIX],
   [BugStatus.TRIAGED]: [BugStatus.IN_PROGRESS, BugStatus.WONT_FIX, BugStatus.OPEN],
   [BugStatus.IN_PROGRESS]: [BugStatus.READY_FOR_RETEST, BugStatus.FIXED],
-  [BugStatus.FIXED]: [BugStatus.READY_FOR_RETEST, BugStatus.REOPENED],
+  [BugStatus.FIXED]: [BugStatus.READY_FOR_RETEST, BugStatus.IN_PROGRESS],
   [BugStatus.READY_FOR_RETEST]: [BugStatus.CLOSED, BugStatus.REOPENED],
   [BugStatus.CLOSED]: [BugStatus.REOPENED],
   [BugStatus.WONT_FIX]: [BugStatus.REOPENED, BugStatus.OPEN],

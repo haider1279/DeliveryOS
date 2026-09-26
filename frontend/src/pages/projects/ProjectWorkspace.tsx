@@ -42,7 +42,7 @@ export const ProjectWorkspace: React.FC = () => {
   const activeTab = searchParams.get('tab') || 'overview';
   const { user } = useAuth();
   const toast = useToast();
-  const canReportBug = ['SUPER_ADMIN', 'ADMIN', 'QA'].includes(user?.role || '');
+  const canReportBug = ['SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER', 'QA'].includes(user?.role || '');
 
   const [project, setProject] = useState<any>(null);
   const [health, setHealth] = useState<any>(null);
@@ -126,6 +126,10 @@ export const ProjectWorkspace: React.FC = () => {
   const [isAskClarificationOpen, setIsAskClarificationOpen] = useState(false);
   const [clarificationReqId, setClarificationReqId] = useState<string | null>(null);
   const [clarificationText, setClarificationText] = useState('');
+  // When true the modal is "closing" a clarification (PM has received the client
+  // answer and is moving back to UNDER_REVIEW); when false it is "asking" one
+  // (PM is sending a clarification question to the client → NEEDS_CLARIFICATION).
+  const [clarificationResolveMode, setClarificationResolveMode] = useState(false);
 
   // Release modal state
   const [relSelectedReqs, setRelSelectedReqs] = useState<string[]>([]);
@@ -445,26 +449,33 @@ export const ProjectWorkspace: React.FC = () => {
     }
   };
 
-  const openAskClarification = (reqId: string) => {
+  const openAskClarification = (reqId: string, resolveMode = false) => {
     setClarificationReqId(reqId);
     setClarificationText('');
+    setClarificationResolveMode(resolveMode);
     setIsAskClarificationOpen(true);
   };
 
   const handleSendClarificationRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!clarificationReqId || !clarificationText.trim()) return;
+    // resolveMode: PM has received the client answer → move back to UNDER_REVIEW.
+    // normal mode: PM is requesting clarification from client → NEEDS_CLARIFICATION.
+    const toStatus = clarificationResolveMode
+      ? RequirementStatus.UNDER_REVIEW
+      : RequirementStatus.NEEDS_CLARIFICATION;
     try {
       await handleRequirementTransition(
         clarificationReqId,
-        RequirementStatus.NEEDS_CLARIFICATION,
+        toStatus,
         clarificationText.trim()
       );
       setIsAskClarificationOpen(false);
       setClarificationText('');
       setClarificationReqId(null);
+      setClarificationResolveMode(false);
     } catch (err: any) {
-      toast.error(err.message || 'Failed to send clarification request');
+      toast.error(err.message || (clarificationResolveMode ? 'Failed to close clarification' : 'Failed to send clarification request'));
     }
   };
 
@@ -657,7 +668,10 @@ export const ProjectWorkspace: React.FC = () => {
       case RequirementStatus.NEEDS_CLARIFICATION:
         if (canManage)
           return [
-            trans(RequirementStatus.UNDER_REVIEW),
+            {
+              label: '→ Close Clarification',
+              onClick: () => openAskClarification(req.id, true),
+            },
             { label: 'Cancel', onClick: () => handleRequirementTransition(req.id, RequirementStatus.CANCELLED) },
           ];
         return [];
@@ -1548,7 +1562,7 @@ export const ProjectWorkspace: React.FC = () => {
                 <option value="LOW">LOW</option>
                 <option value="MEDIUM">MEDIUM</option>
                 <option value="HIGH">HIGH</option>
-                <option value="URGENT">URGENT</option>
+                <option value="CRITICAL">CRITICAL</option>
               </select>
             </div>
           </div>
@@ -1880,7 +1894,7 @@ export const ProjectWorkspace: React.FC = () => {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-700">Tax %</label>
+              <label className="block text-xs font-semibold text-slate-700">Tax ($)</label>
               <input
                 type="number"
                 min="0"
@@ -1890,7 +1904,7 @@ export const ProjectWorkspace: React.FC = () => {
               />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-slate-700">Discount %</label>
+              <label className="block text-xs font-semibold text-slate-700">Discount ($)</label>
               <input
                 type="number"
                 min="0"
@@ -1990,28 +2004,36 @@ export const ProjectWorkspace: React.FC = () => {
       {/* Ask Clarification Modal */}
       <Modal
         isOpen={isAskClarificationOpen}
-        onClose={() => setIsAskClarificationOpen(false)}
-        title="Ask Clarification from Client"
+        onClose={() => { setIsAskClarificationOpen(false); setClarificationResolveMode(false); }}
+        title={clarificationResolveMode ? 'Close Clarification — Resume Review' : 'Ask Clarification from Client'}
       >
         <form onSubmit={handleSendClarificationRequest} className="space-y-4">
           <p className="text-xs text-slate-600">
-            Specify what details or questions the client needs to answer before this requirement can proceed.
+            {clarificationResolveMode
+              ? 'Summarise how the clarification was resolved. This note is recorded in the requirement timeline and the requirement returns to Under Review.'
+              : 'Specify what details or questions the client needs to answer before this requirement can proceed.'}
           </p>
           <div>
-            <label className="block text-xs font-semibold text-slate-700">Clarification Question / Message</label>
+            <label className="block text-xs font-semibold text-slate-700">
+              {clarificationResolveMode ? 'Resolution Summary / Note' : 'Clarification Question / Message'}
+            </label>
             <textarea
               required
               rows={4}
               value={clarificationText}
               onChange={(e) => setClarificationText(e.target.value)}
-              placeholder="Describe the clarification needed from the client..."
+              placeholder={
+                clarificationResolveMode
+                  ? 'Summarise how the question was answered or resolved...'
+                  : 'Describe the clarification needed from the client...'
+              }
               className="mt-1 w-full px-3 py-2 rounded-lg border text-xs focus:outline-none focus:border-brand-500"
             />
           </div>
           <div className="flex justify-end gap-2 pt-3 border-t">
             <button
               type="button"
-              onClick={() => setIsAskClarificationOpen(false)}
+              onClick={() => { setIsAskClarificationOpen(false); setClarificationResolveMode(false); }}
               className="px-3 py-1.5 rounded text-xs text-slate-600 hover:bg-slate-100"
             >
               Cancel
@@ -2019,9 +2041,9 @@ export const ProjectWorkspace: React.FC = () => {
             <button
               type="submit"
               disabled={!clarificationText.trim()}
-              className="px-3.5 py-1.5 rounded text-xs font-semibold bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+              className={`px-3.5 py-1.5 rounded text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50 ${clarificationResolveMode ? 'bg-indigo-600' : 'bg-amber-600 hover:bg-amber-700'}`}
             >
-              Send Clarification Request
+              {clarificationResolveMode ? 'Close & Resume Review' : 'Send Clarification Request'}
             </button>
           </div>
         </form>

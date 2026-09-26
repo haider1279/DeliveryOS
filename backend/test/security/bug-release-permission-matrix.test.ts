@@ -302,7 +302,7 @@ describe('Bug & Release Permission Matrix + Post-Deployment Security', () => {
         });
 
       expect(res.status).toBe(403);
-      expect(res.body.error?.message).toMatch(/Only QA and Administrators|Developers cannot/);
+      expect(res.body.error?.message).toMatch(/Only QA|Administrators|Developers cannot/);
     });
 
     it('Cannot skip states: OPEN cannot transition straight to IN_PROGRESS (must be TRIAGED first)', async () => {
@@ -778,6 +778,63 @@ describe('Bug & Release Permission Matrix + Post-Deployment Security', () => {
         .set('Authorization', `Bearer ${clientBToken}`);
 
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe('PM Bug Reporting (regression: BUG-06 fix)', () => {
+    it('PM CAN now report a bug directly (201)', async () => {
+      const res = await request(app)
+        .post('/api/qa/bugs')
+        .set('Authorization', `Bearer ${pmToken}`)
+        .send({
+          projectId: projectAId,
+          title: 'PM reported defect from review',
+          description: 'Observed during sprint review — modal closes unexpectedly',
+          severity: BugSeverity.HIGH,
+          priority: BugPriority.HIGH,
+          stepsToReproduce: '1. Open task detail\n2. Click away\n3. Modal closes',
+          expectedResult: 'Modal stays open unless explicitly closed',
+          actualResult: 'Modal dismisses on outside click without confirmation',
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.status).toBe(BugStatus.OPEN);
+    });
+
+    it('DEVELOPER still CANNOT report bugs (403)', async () => {
+      const res = await request(app)
+        .post('/api/qa/bugs')
+        .set('Authorization', `Bearer ${devToken}`)
+        .send({
+          projectId: projectAId,
+          title: 'Dev attempting self-report',
+          description: 'Should be rejected at the permission gate',
+          severity: BugSeverity.LOW,
+          priority: BugPriority.LOW,
+          stepsToReproduce: 'Any step',
+          expectedResult: 'Expected outcome',
+          actualResult: 'Actual outcome',
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error?.message).toMatch(/Only QA|Project Manager|Administrator/i);
+    });
+
+    it('Unauthenticated user cannot report bugs (401)', async () => {
+      const res = await request(app)
+        .post('/api/qa/bugs')
+        .send({
+          projectId: projectAId,
+          title: 'Anonymous bug',
+          description: 'Should be rejected',
+          severity: BugSeverity.LOW,
+          priority: BugPriority.LOW,
+          stepsToReproduce: 'Step 1',
+          expectedResult: 'Expected',
+          actualResult: 'Actual',
+        });
+
+      expect(res.status).toBe(401);
     });
   });
 });

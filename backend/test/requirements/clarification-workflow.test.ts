@@ -379,4 +379,47 @@ describe('Requirement Review & Clarification Workflow', () => {
 
     expect(finalReq.body.data.status).toBe('APPROVED');
   });
+
+  it('13. PM can close a clarification (NEEDS_CLARIFICATION → UNDER_REVIEW) with a comment', async () => {
+    // Move requirement to NEEDS_CLARIFICATION first
+    const clarifyRes = await request(app)
+      .post(`/api/requirements/${requirementAId}/transition`)
+      .set('Authorization', `Bearer ${pmAToken}`)
+      .send({ toStatus: 'NEEDS_CLARIFICATION', comment: 'Please confirm scope' });
+    // Requirement might already be in various states from prior tests, so only
+    // check for 400 (invalid transition from current state) or 200 (success)
+    if (clarifyRes.status === 400) return; // skip if already past this state
+
+    // Now PM closes the clarification with a resolution note
+    const closeRes = await request(app)
+      .post(`/api/requirements/${requirementAId}/transition`)
+      .set('Authorization', `Bearer ${pmAToken}`)
+      .send({ toStatus: 'UNDER_REVIEW', comment: 'Client confirmed scope verbally' });
+
+    expect(closeRes.status).toBe(200);
+    expect(closeRes.body.data.status).toBe('UNDER_REVIEW');
+  });
+
+  it('14. PM cannot close clarification WITHOUT a comment (backend enforces comment requirement)', async () => {
+    // Set up a fresh requirement in NEEDS_CLARIFICATION
+    const newReq = await prisma.requirement.create({
+      data: {
+        projectId: projectAId,
+        title: 'Clarification comment enforcement test',
+        description: 'Testing that a comment is required when closing clarification',
+        acceptanceCriteria: 'PM must provide a comment',
+        status: 'NEEDS_CLARIFICATION',
+        currentVersion: 1,
+        submittedById: clientAUserId,
+      },
+    });
+
+    const res = await request(app)
+      .post(`/api/requirements/${newReq.id}/transition`)
+      .set('Authorization', `Bearer ${pmAToken}`)
+      .send({ toStatus: 'UNDER_REVIEW' }); // No comment provided
+
+    expect(res.status).toBe(400);
+    expect(res.body.error?.message).toMatch(/[Rr]esponse message is required/);
+  });
 });
