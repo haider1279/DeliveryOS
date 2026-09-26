@@ -241,7 +241,14 @@ export const BDLeads: React.FC = () => {
       setQualifyTarget(null);
       fetchOrgs(false);
     } catch (err: any) {
+      // The server is authoritative on lead state. A rejection here means our
+      // local view was stale (e.g. an ADMIN already approved this lead), so we
+      // surface the server message, drop the stale action, and refetch the lead
+      // so the card re-renders from the current server state — which removes the
+      // Reject/Approve buttons for a non-PROSPECT lead.
       toast.error(err.message || 'Qualification update failed');
+      setQualifyTarget(null);
+      fetchOrgs(false);
     } finally {
       setQualifying(false);
     }

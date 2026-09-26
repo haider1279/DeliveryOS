@@ -12,6 +12,46 @@ import {
 import { getAccessibleOrganizationIds } from '../../services/project-access.service';
 import { userService } from '../users/user.service';
 
+/**
+ * Client-qualification authority ranking.
+ *
+ * A qualification decision is only overridable by an actor that ranks strictly
+ * higher than the actor who produced the decision that is currently stored:
+ *
+ *   SUPER_ADMIN (3) > ADMIN (2) > BD (1) > everyone else (0)
+ *
+ * This ordering is what makes a stale browser tab harmless: the winning state
+ * lives in the database, and a lower-authority actor can never write over it.
+ */
+const QUALIFICATION_AUTHORITY: Record<UserRole, number> = {
+  [UserRole.SUPER_ADMIN]: 3,
+  [UserRole.ADMIN]: 2,
+  [UserRole.BD]: 1,
+  [UserRole.CLIENT]: 0,
+  [UserRole.DEVELOPER]: 0,
+  [UserRole.QA]: 0,
+  [UserRole.PROJECT_MANAGER]: 0,
+};
+
+const ADMIN_QUALIFY_ROLES: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.ADMIN];
+
+/**
+ * Fail-closed floor for a lead that carries a decision but whose decider can no
+ * longer be resolved (deleted/deactivated account).
+ *
+ * A stored APPROVED decision can only ever have been made by ADMIN or
+ * SUPER_ADMIN (BD can never approve), and a stored REJECTED decision can only
+ * have been made by BD or an administrator. Defaulting an unresolvable decider
+ * to "lowest authority" would silently fail OPEN and let a lower role overwrite
+ * an administrative decision, so we fall back to the strictest authority that
+ * could have produced the stored state.
+ */
+const UNRESOLVED_DECIDER_FLOOR: Record<OrganizationQualificationStatus, number> = {
+  [OrganizationQualificationStatus.PROSPECT]: 0,
+  [OrganizationQualificationStatus.REJECTED]: QUALIFICATION_AUTHORITY[UserRole.BD],
+  [OrganizationQualificationStatus.APPROVED]: QUALIFICATION_AUTHORITY[UserRole.ADMIN],
+};
+
 export class OrgService {
   async createOrg(input: CreateOrganizationInput, actor: AuthenticatedUser) {
     const existing = await prisma.organization.findUnique({
@@ -69,6 +109,23 @@ export class OrgService {
    * off to ADMIN onboarding) or REJECTED. ADMIN/SUPER_ADMIN may also qualify so
    * they can correct a bad decision, but the decision is always recorded against
    * the authenticated actor — never a client-supplied id.
+   *
+   * AUTHORITY / STATE-CONSISTENCY RULES (server-side and authoritative):
+   *
+   *  1. Only SUPER_ADMIN, ADMIN or BD may call this at all.
+   *  2. APPROVED is an administrative act: only SUPER_ADMIN/ADMIN may perform it.
+   *  3. A non-administrator (BD) may only ever decide a lead that is still
+   *     PROSPECT. Once any decision (ADMIN/SUPER_ADMIN approval or a prior BD
+   *     rejection) is stored, a BD may not reject, reverse, overwrite or
+   *     otherwise re-decide it. This is what makes a stale client tab — which
+   *     still renders a "Reject" button — harmless.
+   *  4. Among administrators, a decision may only be corrected by a strictly
+   *     higher authority (SUPER_ADMIN > ADMIN), so an ADMIN can never overwrite
+   *     a SUPER_ADMIN decision.
+   *  5. The write is a conditional/atomic update: it only lands if the stored
+   *     status is still the one the decision was validated against, and the
+   *     result is verified. Two conflicting concurrent requests therefore cannot
+   *     both succeed — the loser gets a 409.
    */
   async qualifyOrg(
     id: string,
@@ -81,21 +138,70 @@ export class OrgService {
       throw AppError.forbidden('Only BD or administrators can qualify a prospective client');
     }
 
-    if (decision === OrganizationQualificationStatus.APPROVED) {
-      if (actor.role !== UserRole.SUPER_ADMIN && actor.role !== UserRole.ADMIN) {
-        throw AppError.forbidden('Only administrators (ADMIN or SUPER_ADMIN) can approve a lead/prospective client');
-      }
+    const isAdmin = ADMIN_QUALIFY_ROLES.includes(actor.role as UserRole);
+    if (decision === OrganizationQualificationStatus.APPROVED && !isAdmin) {
+      throw AppError.forbidden('Only administrators (ADMIN or SUPER_ADMIN) can approve a lead/prospective client');
     }
 
+    // Read the CURRENT persisted state. Never trust a status supplied by, or
+    // cached in, the client.
     const org = await prisma.organization.findFirst({ where: { id, deletedAt: null } });
     if (!org) throw AppError.notFound('Organization not found');
 
-    if (decision === org.qualificationStatus) {
+    const currentStatus = org.qualificationStatus;
+    const attemptedAction = decision === OrganizationQualificationStatus.APPROVED ? 'approve' : 'reject';
+
+    if (decision === currentStatus) {
       throw AppError.badRequest(`Organization is already ${decision}`);
     }
 
-    const updated = await prisma.organization.update({
-      where: { id },
+    // --- Authority gate -----------------------------------------------------
+    // A PROSPECT is undecided, so any permitted role may decide it. Once a
+    // decision is stored, resolve who produced it so the actor can be compared
+    // against it, defaulting to the fail-closed floor when it is unresolvable.
+    const isDecided = currentStatus !== OrganizationQualificationStatus.PROSPECT;
+
+    if (isDecided) {
+      const decider = org.qualifiedById
+        ? await prisma.user.findUnique({ where: { id: org.qualifiedById }, select: { role: true } })
+        : null;
+      const deciderAuthority = decider
+        ? QUALIFICATION_AUTHORITY[decider.role]
+        : UNRESOLVED_DECIDER_FLOOR[currentStatus];
+      const actorAuthority = QUALIFICATION_AUTHORITY[actor.role as UserRole];
+
+      if (!isAdmin) {
+        // Rule 3: BD owns the initial pending decision and nothing else. A
+        // lower role can never reject, reverse or overwrite a stored decision.
+        throw AppError.conflict(
+          `Cannot ${attemptedAction} this lead because it has already been ${currentStatus.toLowerCase()}` +
+            `${deciderAuthority >= QUALIFICATION_AUTHORITY[UserRole.ADMIN] ? ' by an administrator' : ''}. ` +
+            'A lower-authority role cannot reverse a stored decision.',
+          'QUALIFICATION_STATE_CONFLICT'
+        );
+      }
+
+      if (deciderAuthority >= actorAuthority) {
+        // Rule 4: SUPER_ADMIN > ADMIN. Equal or lower authority may not overwrite.
+        throw AppError.conflict(
+          `Cannot ${attemptedAction} this lead because it has already been ${currentStatus.toLowerCase()} ` +
+            `by a ${decider?.role ?? 'lower-authority'} actor, whose authority is not below yours. ` +
+            'Escalate to a SUPER_ADMIN to reverse an administrative decision.',
+          'QUALIFICATION_AUTHORITY_CONFLICT'
+        );
+      }
+    }
+
+    // --- Atomic conditional transition -------------------------------------
+    // Equivalent to: UPDATE organization SET qualificationStatus = :decision
+    //                WHERE id = :id AND deletedAt IS NULL
+    //                  AND qualificationStatus = :expectedStatus
+    // The expected status is the value the decision above was validated
+    // against, so a concurrent writer invalidates this one instead of being
+    // silently overwritten.
+    const expectedStatus = currentStatus;
+    const { count } = await prisma.organization.updateMany({
+      where: { id, deletedAt: null, qualificationStatus: expectedStatus },
       data: {
         qualificationStatus: decision,
         qualificationNotes: notes ?? org.qualificationNotes,
@@ -103,6 +209,24 @@ export class OrgService {
         qualifiedAt: new Date(),
       },
     });
+
+    if (count === 0) {
+      // Someone else changed the lead between our read and our write.
+      const current = await prisma.organization.findFirst({
+        where: { id, deletedAt: null },
+        select: { qualificationStatus: true },
+      });
+      if (!current) throw AppError.notFound('Organization not found');
+      throw AppError.conflict(
+        `Cannot ${attemptedAction} this lead because it was changed to ` +
+          `${current.qualificationStatus.toLowerCase()} by another user while you were reviewing it. ` +
+          'Reload the lead and re-check the current state.',
+        'QUALIFICATION_STATE_CONFLICT'
+      );
+    }
+
+    const updated = await prisma.organization.findUnique({ where: { id } });
+    if (!updated) throw AppError.notFound('Organization not found');
 
     // Automatically invite client representative upon lead approval if contactEmail is available
     if (decision === OrganizationQualificationStatus.APPROVED && org.contactEmail) {
