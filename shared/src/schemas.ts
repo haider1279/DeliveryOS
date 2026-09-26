@@ -136,6 +136,10 @@ export const CreateProjectRequestSchema = z.object({
 export const DecideProjectRequestSchema = z.object({
   decision: z.nativeEnum(ProjectRequestStatus),
   notes: z.string().optional(),
+  // On APPROVED the service creates the real Project, which requires an owning
+  // project manager. Optional so the existing approve flow keeps working; when
+  // omitted the service falls back to an active PROJECT_MANAGER.
+  projectManagerId: z.string().uuid().optional(),
 });
 
 // Project updates must NOT allow re-homing the project to another organization

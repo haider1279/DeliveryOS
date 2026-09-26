@@ -12,6 +12,7 @@ import {
   AlertCircle,
   Loader2,
   Eye,
+  FolderKanban,
   Check,
   X,
 } from 'lucide-react';
@@ -46,6 +47,14 @@ interface ProjectRequestItem {
       displayName?: string;
     } | null;
   } | null;
+  /** Set once an admin approves: the Project this request became. */
+  project?: {
+    id: string;
+    name: string;
+    code: string;
+    status: string;
+    projectManagerId: string;
+  } | null;
 }
 
 const StatusBadge: React.FC<{ status: ProjectRequestStatus }> = ({ status }) => {
@@ -63,7 +72,14 @@ const StatusBadge: React.FC<{ status: ProjectRequestStatus }> = ({ status }) => 
   );
 };
 
-export const ProjectRequests: React.FC = () => {
+interface ProjectManagerOption {
+  id: string;
+  email: string;
+  role: UserRole;
+  profile?: { firstName?: string | null; lastName?: string | null; displayName?: string | null } | null;
+}
+
+export const ProjectRequests: React.FC<{ onDecisionComplete?: () => void }> = ({ onDecisionComplete }) => {
   const { user } = useAuth();
   const { success: toastSuccess, error: toastError } = useToast();
 
@@ -80,6 +96,8 @@ export const ProjectRequests: React.FC = () => {
     decision: 'APPROVED' | 'REJECTED';
   } | null>(null);
   const [decisionNotes, setDecisionNotes] = useState('');
+  const [projectManagers, setProjectManagers] = useState<ProjectManagerOption[]>([]);
+  const [projectManagerId, setProjectManagerId] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const canManage = user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.ADMIN;
@@ -105,6 +123,32 @@ export const ProjectRequests: React.FC = () => {
     fetchRequests();
   }, [fetchRequests]);
 
+  /**
+   * Approving a request creates the real Project, which needs an owning project
+   * manager. Load the eligible PMs so the approver can pick one explicitly.
+   */
+  const loadProjectManagers = useCallback(async () => {
+    try {
+      const res = await api.get<any>('/users');
+      const users: ProjectManagerOption[] = Array.isArray(res) ? res : res?.users || res?.data || [];
+      setProjectManagers(users.filter((u: ProjectManagerOption) => u.role === UserRole.PROJECT_MANAGER));
+    } catch {
+      // Non-fatal: the server falls back to the first active project manager.
+      setProjectManagers([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (canManage) loadProjectManagers();
+  }, [canManage, loadProjectManagers]);
+
+  const openConfirm = (request: ProjectRequestItem, decision: 'APPROVED' | 'REJECTED') => {
+    setSelectedRequest(request);
+    setConfirmModal({ request, decision });
+    setDecisionNotes('');
+    setProjectManagerId('');
+  };
+
   const handleDecisionSubmit = async () => {
     if (!confirmModal) return;
     setSubmitting(true);
@@ -112,20 +156,34 @@ export const ProjectRequests: React.FC = () => {
       await api.patch(`/projects/requests/${confirmModal.request.id}/decision`, {
         decision: confirmModal.decision,
         notes: decisionNotes ? decisionNotes.trim() : undefined,
+        ...(confirmModal.decision === 'APPROVED' && projectManagerId
+          ? { projectManagerId }
+          : {}),
       });
 
       toastSuccess(
         confirmModal.decision === 'APPROVED'
-          ? 'Project request approved successfully'
+          ? `Project request approved — "${confirmModal.request.name}" is now an active project.`
           : 'Project request rejected'
       );
 
       setConfirmModal(null);
       setShowDetailModal(false);
       setDecisionNotes('');
+      // Refetch both sides of the workflow: the request leaves the pending list
+      // and the project appears under Active Projects.
       fetchRequests(false);
+      onDecisionComplete?.();
     } catch (err: any) {
+      // The server owns the decision state. Surface its message and refetch so
+      // a stale Approve/Reject button cannot linger (e.g. the request was
+      // already decided by another admin in another tab).
       toastError(err.message || 'Failed to process project request decision');
+      setConfirmModal(null);
+      fetchRequests(false);
+      // A rejected replay can mean the project was already activated, so
+      // refresh the project list on the error path too.
+      onDecisionComplete?.();
     } finally {
       setSubmitting(false);
     }
@@ -262,6 +320,15 @@ export const ProjectRequests: React.FC = () => {
                     {req.description}
                   </p>
                 )}
+
+                {req.project && (
+                  <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-2.5 py-2 text-[11px] font-semibold text-emerald-800">
+                    <FolderKanban className="h-3.5 w-3.5 flex-shrink-0" />
+                    <span className="truncate">
+                      Active project {req.project.code}
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Action Buttons */}
@@ -280,20 +347,14 @@ export const ProjectRequests: React.FC = () => {
                 {canManage && req.status === ProjectRequestStatus.PENDING && (
                   <>
                     <button
-                      onClick={() => {
-                        setSelectedRequest(req);
-                        setConfirmModal({ request: req, decision: 'APPROVED' });
-                      }}
+                      onClick={() => openConfirm(req, 'APPROVED')}
                       className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors shadow-xs"
                     >
                       <Check className="h-3.5 w-3.5" />
                       Approve
                     </button>
                     <button
-                      onClick={() => {
-                        setSelectedRequest(req);
-                        setConfirmModal({ request: req, decision: 'REJECTED' });
-                      }}
+                      onClick={() => openConfirm(req, 'REJECTED')}
                       className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition-colors shadow-xs"
                     >
                       <X className="h-3.5 w-3.5" />
@@ -389,7 +450,7 @@ export const ProjectRequests: React.FC = () => {
                 <button
                   onClick={() => {
                     setShowDetailModal(false);
-                    setConfirmModal({ request: selectedRequest, decision: 'REJECTED' });
+                    openConfirm(selectedRequest, 'REJECTED');
                   }}
                   className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs transition-colors"
                 >
@@ -398,7 +459,7 @@ export const ProjectRequests: React.FC = () => {
                 <button
                   onClick={() => {
                     setShowDetailModal(false);
-                    setConfirmModal({ request: selectedRequest, decision: 'APPROVED' });
+                    openConfirm(selectedRequest, 'APPROVED');
                   }}
                   className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition-colors"
                 >
@@ -440,11 +501,37 @@ export const ProjectRequests: React.FC = () => {
                 </p>
                 <p className="mt-1 text-slate-500">
                   {confirmModal.decision === 'APPROVED'
-                    ? 'This marks the request as Approved. Official project creation can be performed separately from the Projects workspace.'
+                    ? 'This activates the project: it is created as an active project under Projects → Active Projects and linked back to this request.'
                     : 'This marks the request as Rejected. The client will see the updated request status.'}
                 </p>
               </div>
             </div>
+
+            {confirmModal.decision === 'APPROVED' && (
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Project Manager
+                </label>
+                <select
+                  value={projectManagerId}
+                  onChange={(e) => setProjectManagerId(e.target.value)}
+                  aria-label="Assign project manager"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
+                >
+                  <option value="">Auto-assign first available project manager</option>
+                  {projectManagers.map((pm) => (
+                    <option key={pm.id} value={pm.id}>
+                      {pm.profile?.displayName ||
+                        [pm.profile?.firstName, pm.profile?.lastName].filter(Boolean).join(' ') ||
+                        pm.email}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  The project manager gains access to the new project through their project assignment.
+                </p>
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">

@@ -57,6 +57,22 @@ export const ClientProjects: React.FC = () => {
     fetchData();
   }, [fetchData]);
 
+  // The platform has no realtime transport, so an admin approval performed in
+  // another session would otherwise leave this tab stale until a manual
+  // reload. Refetching when the tab regains focus keeps the request status and
+  // the resulting project current without forcing the client to refresh.
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') fetchData(false);
+    };
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [fetchData]);
+
   const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);

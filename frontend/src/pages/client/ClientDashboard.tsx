@@ -40,8 +40,8 @@ export const ClientDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const fetchDashboard = useCallback(async () => {
-    setLoading(true);
+  const fetchDashboard = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     try {
       const [projectResult, invoiceResult, requestResult] = await Promise.allSettled([
         api.get<any[]>('/projects', { pageSize: 100 }),
@@ -80,12 +80,28 @@ export const ClientDashboard: React.FC = () => {
       console.error('Failed to load client dashboard data', err);
       setLoadError('We could not load your dashboard data. Please try again.');
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     fetchDashboard();
+  }, [fetchDashboard]);
+
+  // No realtime transport exists in the platform, so an admin approval made in
+  // another session would leave this tab showing the old state until a manual
+  // reload. Refresh silently when the tab regains focus so the newly activated
+  // project appears without the client having to refresh.
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') fetchDashboard(false);
+    };
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
   }, [fetchDashboard]);
 
   if (loading) return <LoadingSpinner size="lg" className="h-64" />;

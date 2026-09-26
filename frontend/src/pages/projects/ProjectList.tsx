@@ -145,7 +145,10 @@ export const ProjectList: React.FC = () => {
       )}
 
       {currentTab === 'requests' && canCreate ? (
-        <ProjectRequests />
+        // Approving a request creates the project server-side; refetch the list
+        // so the newly activated project is present the moment the admin
+        // switches back, without a full page reload.
+        <ProjectRequests onDecisionComplete={() => fetchProjects()} />
       ) : (
         <>
 

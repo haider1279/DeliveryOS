@@ -23,6 +23,7 @@ describe('Project Request Admin/SuperAdmin Management RBAC & Decision Flow', () 
   let clientBUserId: string;
   let clientAToken: string;
   let clientBToken: string;
+  let pmUserId: string;
 
   beforeAll(async () => {
     // Create Org A and Org B
@@ -119,6 +120,17 @@ describe('Project Request Admin/SuperAdmin Management RBAC & Decision Flow', () 
       organizationId: clientBUser.organizationId,
     });
 
+    // Real, active project manager: approving a request creates the real
+    // Project, which requires an owning PROJECT_MANAGER.
+    const pmUser = await prisma.user.create({
+      data: {
+        email: `pm-owner-${Date.now()}@agency.com`,
+        role: UserRole.PROJECT_MANAGER,
+        status: 'ACTIVE',
+      },
+    });
+    pmUserId = pmUser.id;
+
     // Create Project Requests
     const reqA1 = await prisma.projectRequest.create({
       data: {
@@ -158,14 +170,24 @@ describe('Project Request Admin/SuperAdmin Management RBAC & Decision Flow', () 
   });
 
   afterAll(async () => {
-    if (orgAId || orgBId) {
-      await prisma.projectRequest.deleteMany({
-        where: { organizationId: { in: [orgAId, orgBId].filter(Boolean) } },
+    const orgIds = [orgAId, orgBId].filter(Boolean);
+    if (orgIds.length) {
+      // Approving a request materialises a Project (Project.organizationId is
+      // ON DELETE RESTRICT), so the generated projects must go first.
+      const projects = await prisma.project.findMany({
+        where: { organizationId: { in: orgIds } },
+        select: { id: true },
       });
+      const projectIds = projects.map((p) => p.id);
+      if (projectIds.length) {
+        await prisma.projectMember.deleteMany({ where: { projectId: { in: projectIds } } });
+        await prisma.project.deleteMany({ where: { id: { in: projectIds } } });
+      }
+      await prisma.projectRequest.deleteMany({ where: { organizationId: { in: orgIds } } });
     }
-    if (clientAUserId || clientBUserId) {
+    if (clientAUserId || clientBUserId || pmUserId) {
       await prisma.user.deleteMany({
-        where: { id: { in: [clientAUserId, clientBUserId].filter(Boolean) } },
+        where: { id: { in: [clientAUserId, clientBUserId, pmUserId].filter(Boolean) } },
       });
     }
     if (orgAId) await prisma.organization.deleteMany({ where: { id: orgAId } });
@@ -262,12 +284,17 @@ describe('Project Request Admin/SuperAdmin Management RBAC & Decision Flow', () 
       const res = await request(app)
         .patch(`/api/projects/requests/${requestA1Id}/decision`)
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ decision: 'APPROVED', notes: 'Scope approved' });
+        .send({ decision: 'APPROVED', notes: 'Scope approved', projectManagerId: pmUserId });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data.status).toBe('APPROVED');
       expect(res.body.data.notes).toBe('Scope approved');
+      // Approval materialises the real project and links it back.
+      expect(res.body.data.projectId).toBeTruthy();
+      expect(res.body.data.project).toBeTruthy();
+      expect(res.body.data.project.status).toBe('ACTIVE');
+      expect(res.body.data.project.projectManagerId).toBe(pmUserId);
 
       // Verify auditService.log was invoked with right payload
       expect(spy).toHaveBeenCalledWith(
