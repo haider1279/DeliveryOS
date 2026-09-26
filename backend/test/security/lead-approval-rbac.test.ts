@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { app } from '../../src/app';
 import { prisma } from '../../src/config/prisma';
-import { authService } from '../../src/modules/auth/auth.service';
+import { tokenForRole } from '../helpers/role-token';
 import { UserRole, OrganizationQualificationStatus } from '@deliveryos/shared';
 
 describe('Lead Approval Authorization RBAC Matrix', () => {
@@ -40,48 +40,18 @@ describe('Lead Approval Authorization RBAC Matrix', () => {
     });
     clientOrgId = clientOrg.id;
 
-    superAdminToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000099',
-      email: 'superadmin@agency.com',
-      role: UserRole.SUPER_ADMIN,
-    });
-
-    adminToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000098',
-      email: 'admin@agency.com',
-      role: UserRole.ADMIN,
-    });
-
-    bdToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000097',
-      email: 'bd@agency.com',
-      role: UserRole.BD,
-    });
-
-    pmToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000096',
-      email: 'pm@agency.com',
-      role: UserRole.PROJECT_MANAGER,
-    });
-
-    devToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000095',
-      email: 'dev@agency.com',
-      role: UserRole.DEVELOPER,
-    });
-
-    qaToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000094',
-      email: 'qa@agency.com',
-      role: UserRole.QA,
-    });
-
-    clientToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000093',
-      email: 'client@clientorg.com',
-      role: UserRole.CLIENT,
-      organizationId: clientOrgId,
-    });
+    // Real seeded accounts so every request authenticates against an actual
+    // database row (authMiddleware resolves identity from the DB per request).
+    [superAdminToken, adminToken, bdToken, pmToken, devToken, qaToken, clientToken] =
+      await Promise.all([
+        tokenForRole(UserRole.SUPER_ADMIN),
+        tokenForRole(UserRole.ADMIN),
+        tokenForRole(UserRole.BD),
+        tokenForRole(UserRole.PROJECT_MANAGER),
+        tokenForRole(UserRole.DEVELOPER),
+        tokenForRole(UserRole.QA),
+        tokenForRole(UserRole.CLIENT),
+      ]);
   });
 
   afterAll(async () => {

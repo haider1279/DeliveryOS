@@ -4,6 +4,7 @@ import { app } from '../../src/app';
 import { prisma } from '../../src/config/prisma';
 import { authService } from '../../src/modules/auth/auth.service';
 import { auditService } from '../../src/services/audit.service';
+import { tokenForRole } from '../helpers/role-token';
 import { UserRole, OrganizationQualificationStatus } from '@deliveryos/shared';
 
 describe('Project Request Admin/SuperAdmin Management RBAC & Decision Flow', () => {
@@ -47,42 +48,16 @@ describe('Project Request Admin/SuperAdmin Management RBAC & Decision Flow', () 
     });
     orgBId = orgB.id;
 
-    // Tokens for staff roles
-    superAdminToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000099',
-      email: 'superadmin-req@agency.com',
-      role: UserRole.SUPER_ADMIN,
-    });
-
-    adminToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000098',
-      email: 'admin-req@agency.com',
-      role: UserRole.ADMIN,
-    });
-
-    bdToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000097',
-      email: 'bd-req@agency.com',
-      role: UserRole.BD,
-    });
-
-    pmToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000096',
-      email: 'pm-req@agency.com',
-      role: UserRole.PROJECT_MANAGER,
-    });
-
-    devToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000095',
-      email: 'dev-req@agency.com',
-      role: UserRole.DEVELOPER,
-    });
-
-    qaToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000094',
-      email: 'qa-req@agency.com',
-      role: UserRole.QA,
-    });
+    // Staff tokens for real seeded accounts (authMiddleware resolves identity
+    // from the database row on every request, so fabricated ids are rejected).
+    [superAdminToken, adminToken, bdToken, pmToken, devToken, qaToken] = await Promise.all([
+      tokenForRole(UserRole.SUPER_ADMIN),
+      tokenForRole(UserRole.ADMIN),
+      tokenForRole(UserRole.BD),
+      tokenForRole(UserRole.PROJECT_MANAGER),
+      tokenForRole(UserRole.DEVELOPER),
+      tokenForRole(UserRole.QA),
+    ]);
 
     // Client user in Org A
     const clientAUser = await prisma.user.create({

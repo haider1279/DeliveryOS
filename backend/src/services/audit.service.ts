@@ -1,4 +1,5 @@
 import { prisma } from '../config/prisma';
+import type { UserRole } from '@prisma/client';
 
 interface AuditLogEntry {
   actorId: string;
@@ -6,6 +7,18 @@ interface AuditLogEntry {
   entityType: string;
   entityId: string;
   metadata?: Record<string, unknown>;
+  /**
+   * Optional pre-resolved actor identity. Callers that already loaded the
+   * actor (or that are recording an entry for an account that is about to be
+   * deleted) can pass it to avoid the extra lookup.
+   */
+  actorSnapshot?: AuditActorSnapshot;
+}
+
+export interface AuditActorSnapshot {
+  email: string;
+  name?: string | null;
+  role?: UserRole | null;
 }
 
 interface AuditLogQueryParams {
@@ -23,12 +36,35 @@ interface AuditLogQueryParams {
  * Never stores passwords, tokens, or secrets in metadata.
  */
 export const auditService = {
+  /**
+   * Resolves the actor's identity once, at write time, into an immutable
+   * snapshot. `AuditLog.actorId` is nullable with ON DELETE SET NULL so the
+   * row survives permanent account deletion — the snapshot is what keeps the
+   * trail attributable afterwards.
+   */
+  async resolveActorSnapshot(actorId: string): Promise<AuditActorSnapshot | null> {
+    const user = await prisma.user.findUnique({
+      where: { id: actorId },
+      select: { email: true, role: true, profile: { select: { firstName: true, lastName: true, displayName: true } } },
+    });
+    if (!user) return null;
+    const name =
+      user.profile?.displayName ||
+      [user.profile?.firstName, user.profile?.lastName].filter(Boolean).join(' ') ||
+      null;
+    return { email: user.email, name, role: user.role };
+  },
+
   async log(entry: AuditLogEntry): Promise<void> {
     if (process.env['NODE_ENV'] === 'test' || !process.env['DATABASE_URL']) return;
     try {
+      let snapshot = entry.actorSnapshot ?? (await this.resolveActorSnapshot(entry.actorId));
       await prisma.auditLog.create({
         data: {
           actorId: entry.actorId,
+          actorEmail: snapshot?.email ?? null,
+          actorName: snapshot?.name ?? null,
+          actorRole: snapshot?.role ?? null,
           action: entry.action,
           entityType: entry.entityType,
           entityId: entry.entityId,

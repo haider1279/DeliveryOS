@@ -1,10 +1,24 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
 import { app } from '../../src/app';
-import { authService } from '../../src/modules/auth/auth.service';
+import { tokenForRole } from '../helpers/role-token';
 import { UserRole } from '@deliveryos/shared';
 
 describe('RBAC and Tenant Security Matrix', () => {
+  // Real seeded accounts, so every request below is authenticated against an
+  // actual database row rather than a test-only synthetic identity.
+  let devToken: string;
+  let qaToken: string;
+  let clientToken: string;
+
+  beforeAll(async () => {
+    [devToken, qaToken, clientToken] = await Promise.all([
+      tokenForRole(UserRole.DEVELOPER),
+      tokenForRole(UserRole.QA),
+      tokenForRole(UserRole.CLIENT),
+    ]);
+  });
+
   it('GET /health returns 200 with status ok without authentication', async () => {
     const res = await request(app).get('/health');
     expect(res.status).toBe(200);
@@ -18,12 +32,6 @@ describe('RBAC and Tenant Security Matrix', () => {
   });
 
   it('Developer is forbidden from accessing billing invoices (GET /api/invoices)', async () => {
-    const devToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000001',
-      email: 'dev@agency.com',
-      role: UserRole.DEVELOPER,
-    });
-
     const res = await request(app)
       .get('/api/invoices')
       .set('Authorization', `Bearer ${devToken}`);
@@ -33,12 +41,6 @@ describe('RBAC and Tenant Security Matrix', () => {
   });
 
   it('Developer is forbidden from accessing executive financials (GET /api/reports/summary)', async () => {
-    const devToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000001',
-      email: 'dev@agency.com',
-      role: UserRole.DEVELOPER,
-    });
-
     const res = await request(app)
       .get('/api/reports/summary')
       .set('Authorization', `Bearer ${devToken}`);
@@ -48,12 +50,6 @@ describe('RBAC and Tenant Security Matrix', () => {
   });
 
   it('QA engineer is forbidden from viewing team audit logs (GET /api/audit)', async () => {
-    const qaToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000002',
-      email: 'qa@agency.com',
-      role: UserRole.QA,
-    });
-
     const res = await request(app)
       .get('/api/audit')
       .set('Authorization', `Bearer ${qaToken}`);
@@ -63,13 +59,6 @@ describe('RBAC and Tenant Security Matrix', () => {
   });
 
   it('Client is forbidden from creating development tasks directly (POST /api/tasks)', async () => {
-    const clientToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000003',
-      email: 'client@acme.com',
-      role: UserRole.CLIENT,
-      organizationId: '11111111-1111-1111-1111-111111111111',
-    });
-
     const res = await request(app)
       .post('/api/tasks')
       .set('Authorization', `Bearer ${clientToken}`)

@@ -478,7 +478,9 @@ export class QaService {
     });
 
     // Retest cycle: if bug is marked READY_FOR_RETEST, notify QA reporter immediately!
-    if (input.status === BugStatus.READY_FOR_RETEST) {
+    // A null reporterId means the reporting account was permanently deleted —
+    // the bug and its history remain, but there is no longer anyone to notify.
+    if (input.status === BugStatus.READY_FOR_RETEST && bug.reporterId) {
       const reporter = await prisma.user.findUnique({
         where: { id: bug.reporterId },
         select: { role: true },

@@ -89,17 +89,25 @@ export async function authMiddleware(
       throw new AppError('UNAUTHORIZED', 'Invalid token payload', 401);
     }
 
-    // Look up user in our DB by id, supabaseUserId, OR email
+    // Look up user in our DB by id, supabaseUserId, OR email.
+    //
+    // A synthetic identity derived from the token is ONLY acceptable when there
+    // is no database to consult at all (offline integration tests). Whenever a
+    // live DATABASE_URL exists, a token that does not resolve to a real row must
+    // be rejected — otherwise a deleted or non-existent account (or a forged
+    // token whose `role` claim is trusted) would still be authenticated.
+    const allowSyntheticIdentity = config.isTest && !process.env['DATABASE_URL'] && Boolean(decoded.role);
+    const syntheticIdentity = () => ({
+      id: userId,
+      email,
+      role: decoded.role,
+      status: UserStatus.ACTIVE,
+      organizationId: decoded.organizationId ?? null,
+    });
+
     let dbUser: any = null;
-    if (config.isTest && !process.env['DATABASE_URL'] && decoded.role) {
-      // Integration tests without a live database use a synthetic identity.
-      dbUser = {
-        id: userId,
-        email,
-        role: decoded.role,
-        status: UserStatus.ACTIVE,
-        organizationId: decoded.organizationId ?? null,
-      };
+    if (allowSyntheticIdentity) {
+      dbUser = syntheticIdentity();
     } else {
       try {
         dbUser = await prisma.user.findFirst({
@@ -113,14 +121,8 @@ export async function authMiddleware(
           include: { profile: true },
         });
       } catch (dbErr) {
-        if (config.isTest && decoded.role) {
-          dbUser = {
-            id: userId,
-            email,
-            role: decoded.role,
-            status: UserStatus.ACTIVE,
-            organizationId: decoded.organizationId ?? null,
-          };
+        if (allowSyntheticIdentity) {
+          dbUser = syntheticIdentity();
         } else {
           throw dbErr;
         }
@@ -128,14 +130,8 @@ export async function authMiddleware(
     }
 
     if (!dbUser) {
-      if (config.isTest && decoded.role) {
-        dbUser = {
-          id: userId,
-          email,
-          role: decoded.role,
-          status: UserStatus.ACTIVE,
-          organizationId: decoded.organizationId ?? null,
-        };
+      if (allowSyntheticIdentity) {
+        dbUser = syntheticIdentity();
       } else {
         throw new AppError('UNAUTHORIZED', 'User account not found', 401);
       }

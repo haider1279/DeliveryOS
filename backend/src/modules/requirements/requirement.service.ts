@@ -440,7 +440,10 @@ export const requirementService = {
       );
     }
 
-    if (dto.toStatus === RequirementStatus.NEEDS_CLARIFICATION) {
+    // A null submittedById means the submitter's account was permanently
+    // deleted: the requirement and its history are preserved, but there is no
+    // longer an account to send the clarification to.
+    if (dto.toStatus === RequirementStatus.NEEDS_CLARIFICATION && req.submittedById) {
       await notificationService.send({
         userId: req.submittedById,
         type: NotificationType.REQUIREMENT_CLARIFICATION,

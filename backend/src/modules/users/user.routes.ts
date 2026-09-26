@@ -58,4 +58,23 @@ router.patch(
   (req, res, next) => userController.updateRole(req, res, next)
 );
 
+// Admin: pre-flight check for permanent deletion (drives the confirm dialog).
+router.get(
+  '/:id/deletion-preview',
+  authMiddleware,
+  requireRole([UserRole.SUPER_ADMIN, UserRole.ADMIN]),
+  (req, res, next) => userController.previewRemoval(req, res, next)
+);
+
+// Admin: PERMANENTLY delete a user account from the database.
+// This is a true row deletion, not a deactivate. Authorization is enforced
+// again inside the service (self-delete, role hierarchy, PM ownership), so the
+// route guard is defence in depth rather than the only check.
+router.delete(
+  '/:id',
+  authMiddleware,
+  requireRole([UserRole.SUPER_ADMIN, UserRole.ADMIN]),
+  (req, res, next) => userController.remove(req, res, next)
+);
+
 export default router;

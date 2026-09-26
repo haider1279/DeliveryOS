@@ -3,6 +3,7 @@ import request from 'supertest';
 import { app } from '../../src/app';
 import { prisma } from '../../src/config/prisma';
 import { authService } from '../../src/modules/auth/auth.service';
+import { tokenForRole } from '../helpers/role-token';
 import { UserRole, OrganizationQualificationStatus } from '@deliveryos/shared';
 
 describe('Project Creation & Request Authorization Matrix', () => {
@@ -46,40 +47,20 @@ describe('Project Creation & Request Authorization Matrix', () => {
     });
     otherOrgId = otherOrg.id;
 
-    superAdminToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000089',
-      email: 'superadmin-proj@agency.com',
-      role: UserRole.SUPER_ADMIN,
-    });
-
-    adminToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000088',
-      email: 'admin-proj@agency.com',
-      role: UserRole.ADMIN,
-    });
-
-    bdToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000087',
-      email: 'bd-proj@agency.com',
-      role: UserRole.BD,
-    });
+    // Staff tokens for real seeded accounts (authMiddleware resolves identity
+    // from the database row on every request, so fabricated ids are rejected).
+    [superAdminToken, adminToken, bdToken, devToken, qaToken] = await Promise.all([
+      tokenForRole(UserRole.SUPER_ADMIN),
+      tokenForRole(UserRole.ADMIN),
+      tokenForRole(UserRole.BD),
+      tokenForRole(UserRole.DEVELOPER),
+      tokenForRole(UserRole.QA),
+    ]);
 
     pmToken = authService.createDevToken({
       id: pmUserId,
       email: pm.email,
       role: UserRole.PROJECT_MANAGER,
-    });
-
-    devToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000085',
-      email: 'dev-proj@agency.com',
-      role: UserRole.DEVELOPER,
-    });
-
-    qaToken = authService.createDevToken({
-      id: '00000000-0000-0000-0000-000000000084',
-      email: 'qa-proj@agency.com',
-      role: UserRole.QA,
     });
 
     const clientUser = await prisma.user.create({

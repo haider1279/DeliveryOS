@@ -51,7 +51,21 @@ export const AuditLogs: React.FC = () => {
                     {new Date(log.createdAt).toLocaleString()}
                   </td>
                   <td className="px-6 py-3.5 font-bold text-slate-900">
-                    {log.actor?.profile?.displayName || log.actor?.email}
+                    {log.actor?.profile?.displayName ||
+                      log.actor?.email ||
+                      // The account was permanently deleted: the immutable
+                      // snapshot captured when the entry was written keeps the
+                      // audit trail attributable.
+                      log.actorName ||
+                      log.actorEmail || (
+                        <span
+                          className="text-slate-400 font-normal"
+                          title="The account behind this action was permanently deleted"
+                        >
+                          Deleted user
+                          {log.actorRole ? ` (${log.actorRole})` : ''}
+                        </span>
+                      )}
                   </td>
                   <td className="px-6 py-3.5">
                     <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">

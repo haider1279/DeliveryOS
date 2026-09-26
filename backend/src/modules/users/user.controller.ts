@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { userService } from './user.service';
+import { deleteUserAccount, previewUserDeletion } from './user-deletion.service';
 import { sendSuccess, sendCreated, buildPaginationMeta } from '../../utils/response';
 
 export class UserController {
@@ -53,9 +54,33 @@ export class UserController {
     try {
       const profile = await userService.updateProfile(req.user!.id, req.body);
       sendSuccess(res, { data: profile, message: 'Profile updated successfully' });
-    } catch (err) {
-      next(err);
-    }
+    } catch (err) { next(err); }
+  }
+
+  /**
+   * Permanently removes a user account from the database.
+   *
+   * The actor comes from the auth middleware (resolved from the database row,
+   * never from client-supplied claims); the target id is the only value read
+   * from the request and is re-validated against the database inside the
+   * service.
+   */
+  async remove(req: Request, res: Response, next: NextFunction) {
+    try {
+      const result = await deleteUserAccount(String(req.params.id), req.user!);
+      sendSuccess(res, {
+        data: result,
+        message: `${result.deletedEmail} was permanently deleted.`,
+      });
+    } catch (err) { next(err); }
+  }
+
+  /** Pre-flight check used to enable/disable the Delete action in the UI. */
+  async previewRemoval(req: Request, res: Response, next: NextFunction) {
+    try {
+      const result = await previewUserDeletion(String(req.params.id), req.user!);
+      sendSuccess(res, { data: result });
+    } catch (err) { next(err); }
   }
 }
 
