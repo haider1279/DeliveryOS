@@ -174,7 +174,15 @@ export const App: React.FC = () => {
                         UserRole.PROJECT_MANAGER,
                       ]}
                     >
-                      <TeamManagement />
+                      <TeamManagement section="team" />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="clients"
+                  element={
+                    <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN, UserRole.ADMIN]}>
+                      <TeamManagement section="clients" />
                     </ProtectedRoute>
                   }
                 />

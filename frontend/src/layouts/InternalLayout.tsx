@@ -30,6 +30,7 @@ export const InternalLayout: React.FC = () => {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [peopleExpanded, setPeopleExpanded] = useState(true);
 
   const fetchNotifications = async () => {
     try {
@@ -79,6 +80,11 @@ export const InternalLayout: React.FC = () => {
   // BD role is focused on the client-acquisition pipeline — they don't
   // participate in project execution, so we hide unrelated nav items.
   const isBD = user?.role === UserRole.BD;
+  const canManagePeople = isRole([UserRole.SUPER_ADMIN, UserRole.ADMIN]);
+  const peopleItems = [
+    { label: 'Team', path: '/app/users', icon: Users },
+    { label: 'Clients', path: '/app/clients', icon: Briefcase },
+  ];
 
   const navItems = [
     { label: 'Dashboard', path: '/app/dashboard', icon: LayoutDashboard },
@@ -99,13 +105,19 @@ export const InternalLayout: React.FC = () => {
           { label: 'Reports', path: '/app/reports', icon: BarChart3 },
         ]
       : []),
-    ...(isRole([UserRole.SUPER_ADMIN, UserRole.ADMIN])
-      ? [
-          { label: 'Team', path: '/app/users', icon: Users },
-          { label: 'Audit Log', path: '/app/audit', icon: ShieldCheck },
-        ]
-      : []),
   ];
+
+  const adminNavItems = canManagePeople
+    ? [{ label: 'Audit Log', path: '/app/audit', icon: ShieldCheck }]
+    : [];
+
+  const peopleActive = peopleItems.some((item) => location.pathname.startsWith(item.path));
+  const currentNavLabel =
+    location.pathname === '/app/users'
+      ? 'Team'
+      : location.pathname === '/app/clients'
+        ? 'Clients'
+        : [...navItems, ...adminNavItems].find((i) => location.pathname.startsWith(i.path))?.label || 'DeliveryOS';
 
   return (
     <div className="flex h-screen bg-slate-50">
@@ -141,6 +153,85 @@ export const InternalLayout: React.FC = () => {
           {/* Navigation Links */}
           <nav className="p-4 space-y-1">
             {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = location.pathname.startsWith(item.path);
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  onClick={() => setSidebarOpen(false)}
+                  className={`flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    isActive
+                      ? 'bg-brand-50 text-brand-700 font-semibold shadow-xs'
+                      : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'
+                  }`}
+                >
+                  <Icon
+                    className={`h-4 w-4 ${
+                      isActive ? 'text-brand-600' : 'text-slate-400 group-hover:text-slate-500'
+                    }`}
+                  />
+                  {item.label}
+                </Link>
+              );
+            })}
+
+            {canManagePeople && (
+              <div className="space-y-1">
+                <button
+                  type="button"
+                  onClick={() => setPeopleExpanded((expanded) => !expanded)}
+                  aria-expanded={peopleExpanded}
+                  className={`flex w-full items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    peopleActive
+                      ? 'bg-brand-50 text-brand-700 font-semibold shadow-xs'
+                      : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'
+                  }`}
+                >
+                  <Users
+                    className={`h-4 w-4 ${
+                      peopleActive ? 'text-brand-600' : 'text-slate-400'
+                    }`}
+                  />
+                  <span className="flex-1 text-left">People</span>
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 transition-transform ${
+                      peopleExpanded ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+
+                {peopleExpanded && (
+                  <div className="ml-3 space-y-1 border-l border-slate-200 pl-3">
+                    {peopleItems.map((item) => {
+                      const Icon = item.icon;
+                      const isActive = location.pathname.startsWith(item.path);
+                      return (
+                        <Link
+                          key={item.path}
+                          to={item.path}
+                          onClick={() => setSidebarOpen(false)}
+                          className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                            isActive
+                              ? 'bg-brand-50 text-brand-700 font-semibold'
+                              : 'text-slate-500 hover:bg-slate-100/80 hover:text-slate-800'
+                          }`}
+                        >
+                          <Icon
+                            className={`h-3.5 w-3.5 ${
+                              isActive ? 'text-brand-600' : 'text-slate-400'
+                            }`}
+                          />
+                          {item.label}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {adminNavItems.map((item) => {
               const Icon = item.icon;
               const isActive = location.pathname.startsWith(item.path);
               return (
@@ -208,9 +299,7 @@ export const InternalLayout: React.FC = () => {
             >
               {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
-            <h1 className="text-lg font-semibold text-slate-900">
-              {navItems.find((i) => location.pathname.startsWith(i.path))?.label || 'DeliveryOS'}
-            </h1>
+            <h1 className="text-lg font-semibold text-slate-900">{currentNavLabel}</h1>
           </div>
 
           <div className="flex items-center gap-4">

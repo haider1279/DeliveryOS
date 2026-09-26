@@ -30,11 +30,29 @@ test.describe('Staff portal coverage', () => {
     await expect(page.getByRole('heading', { name: /QA & Bug Tracker/i })).toBeVisible();
   });
 
-  test('admin sees Team, Audit Log, Invoices, and Reports navigation', async ({ page }) => {
+  test('admin sees People navigation with separate Team and Clients pages', async ({ page }) => {
     await login(page, 'haider2.euroshub@gmail.com', 'Admin#2026!DeliveryOS');
 
-    await page.getByRole('link', { name: /^Team$/i }).click();
+    const peopleToggle = page.getByRole('button', { name: /^People$/i });
+    await expect(peopleToggle).toBeVisible();
+    await expect(peopleToggle).toHaveAttribute('aria-expanded', 'true');
+
+    const teamLink = page.getByRole('navigation').getByRole('link', { name: /^Team$/i });
+    const clientsLink = page.getByRole('navigation').getByRole('link', { name: /^Clients$/i });
+    await expect(teamLink).toBeVisible();
+    await expect(clientsLink).toBeVisible();
+
+    await teamLink.click();
     await expect(page).toHaveURL(/\/app\/users/);
+    await expect(page.getByRole('heading', { name: /^Team$/i, level: 2 })).toBeVisible();
+    await expect(page.getByText('haider2.euroshub@gmail.com', { exact: true })).toBeVisible();
+    await expect(page.getByText('haider6.euroshub@gmail.com', { exact: true })).not.toBeVisible();
+
+    await clientsLink.click();
+    await expect(page).toHaveURL(/\/app\/clients/);
+    await expect(page.getByRole('heading', { name: /^Clients$/i, level: 2 })).toBeVisible();
+    await expect(page.getByText('haider6.euroshub@gmail.com', { exact: true })).toBeVisible();
+    await expect(page.getByText('haider2.euroshub@gmail.com', { exact: true })).not.toBeVisible();
 
     await page.getByRole('link', { name: /Audit Log/i }).click();
     await expect(page).toHaveURL(/\/app\/audit/);
@@ -46,9 +64,24 @@ test.describe('Staff portal coverage', () => {
     await expect(page).toHaveURL(/\/app\/reports/);
   });
 
-  test('PM does not see admin-only navigation (Team / Audit Log)', async ({ page }) => {
+  test('super admin sees the same People navigation', async ({ page }) => {
+    await login(page, 'haider1.euroshub@gmail.com', 'SuperAdmin#2026!DeliveryOS');
+
+    await expect(page.getByRole('button', { name: /^People$/i })).toBeVisible();
+    await page.getByRole('navigation').getByRole('link', { name: /^Team$/i }).click();
+    await expect(page).toHaveURL(/\/app\/users/);
+    await expect(page.getByRole('heading', { name: /^Team$/i, level: 2 })).toBeVisible();
+    await page.getByRole('navigation').getByRole('link', { name: /^Clients$/i }).click();
+    await expect(page).toHaveURL(/\/app\/clients/);
+    await expect(page.getByRole('heading', { name: /^Clients$/i, level: 2 })).toBeVisible();
+  });
+
+
+  test('PM does not see admin-only People navigation (Team / Clients / Audit Log)', async ({ page }) => {
     await login(page, 'haider8.euroshub@gmail.com', 'ProjectManager#2026!DeliveryOS');
+    await expect(page.getByRole('button', { name: /^People$/i })).not.toBeVisible();
     await expect(page.getByRole('link', { name: /^Team$/i })).not.toBeVisible();
+    await expect(page.getByRole('link', { name: /^Clients$/i })).not.toBeVisible();
     await expect(page.getByRole('link', { name: /Audit Log/i })).not.toBeVisible();
   });
 

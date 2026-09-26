@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { Users, Plus, Shield, UserX, UserCheck, Link2, Copy, Check, Building2 } from 'lucide-react';
 import { api } from '../../api/client';
 import { Modal } from '../../components/ui/Modal';
@@ -7,7 +8,18 @@ import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
 import { UserRole, OrganizationQualificationStatus } from '@deliveryos/shared';
 
-export const TeamManagement: React.FC = () => {
+type PeopleSection = 'team' | 'clients';
+
+const INTERNAL_ROLE_OPTIONS = [
+  UserRole.DEVELOPER,
+  UserRole.QA,
+  UserRole.PROJECT_MANAGER,
+  UserRole.BD,
+  UserRole.ADMIN,
+];
+
+export const TeamManagement: React.FC<{ section?: PeopleSection }> = ({ section = 'team' }) => {
+  const isClientsSection = section === 'clients';
   const { user: actor } = useAuth();
   const canManageRoles =
     actor?.role === UserRole.SUPER_ADMIN || actor?.role === UserRole.ADMIN;
@@ -20,7 +32,7 @@ export const TeamManagement: React.FC = () => {
   const [email, setEmail] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  const [role, setRole] = useState('DEVELOPER');
+  const [role, setRole] = useState<string>(isClientsSection ? UserRole.CLIENT : UserRole.DEVELOPER);
   const [organizationId, setOrganizationId] = useState('');
   const [jobTitle, setJobTitle] = useState('');
   const [inviteResult, setInviteResult] = useState<any>(null);
@@ -31,10 +43,15 @@ export const TeamManagement: React.FC = () => {
     try {
       const [usersRes, orgsRes]: [any, any] = await Promise.all([
         api.get('/users'),
-        api.get('/organizations', { pageSize: 100 }),
+        isClientsSection ? api.get('/organizations', { pageSize: 100 }) : Promise.resolve(null),
       ]);
-      setUsers(usersRes?.users || usersRes || []);
-      const allOrgs = orgsRes?.orgs || orgsRes || [];
+      const allUsers: any[] = usersRes?.users || usersRes || [];
+      setUsers(
+        isClientsSection
+          ? allUsers.filter((u: any) => u.role === UserRole.CLIENT)
+          : allUsers.filter((u: any) => u.role !== UserRole.CLIENT)
+      );
+      const allOrgs: any[] = orgsRes?.orgs || orgsRes || [];
       const approvedOrgs = allOrgs.filter(
         (o: any) => o.qualificationStatus === OrganizationQualificationStatus.APPROVED || !o.qualificationStatus
       );
@@ -51,7 +68,7 @@ export const TeamManagement: React.FC = () => {
 
   useEffect(() => {
     fetchUsers();
-  }, []);
+  }, [isClientsSection]);
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,7 +89,7 @@ export const TeamManagement: React.FC = () => {
       setEmail('');
       setFirstName('');
       setLastName('');
-      setRole('DEVELOPER');
+      setRole(isClientsSection ? UserRole.CLIENT : UserRole.DEVELOPER);
       setJobTitle('');
       setInviteResult(result);
       toast.success('Invitation created — share the one-time link.');
@@ -121,21 +138,49 @@ export const TeamManagement: React.FC = () => {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Team & User Management</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">
+            {isClientsSection ? 'Clients' : 'Team'}
+          </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Invite engineers, assign system roles, manage status, and configure team members.
+            {isClientsSection
+              ? 'Manage client accounts and their approved organizations.'
+              : 'Manage internal DeliveryOS team members, system roles, and account status.'}
           </p>
         </div>
         <button
           onClick={() => {
-            if (orgs.length > 0 && !organizationId) setOrganizationId(orgs[0].id);
+            if (isClientsSection && orgs.length > 0 && !organizationId) setOrganizationId(orgs[0].id);
             setIsInviteOpen(true);
           }}
           className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700 shadow-sm transition-all"
         >
-          <Plus className="h-4 w-4" /> Invite User
+          <Plus className="h-4 w-4" /> {isClientsSection ? 'Invite Client' : 'Invite Team Member'}
         </button>
       </div>
+
+      {isClientsSection && orgs.length > 0 && (
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-xs font-semibold text-slate-800">
+              <Building2 className="h-4 w-4 text-brand-600" />
+              Client organizations
+            </div>
+            <Link to="/app/leads" className="text-xs font-medium text-brand-600 hover:text-brand-700">
+              Manage pipeline
+            </Link>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {orgs.map((o: any) => (
+              <span key={o.id} className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px] font-medium text-slate-600">
+                {o.name}
+                {o._count?.users !== undefined && (
+                  <span className="ml-1 text-slate-400">{o._count.users} user{o._count.users === 1 ? '' : 's'}</span>
+                )}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
@@ -169,12 +214,7 @@ export const TeamManagement: React.FC = () => {
                         className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] font-bold uppercase text-slate-700 bg-white focus:outline-none focus:border-brand-500"
                       >
                         {[
-                          UserRole.DEVELOPER,
-                          UserRole.QA,
-                          UserRole.PROJECT_MANAGER,
-                          UserRole.BD,
-                          UserRole.CLIENT,
-                          UserRole.ADMIN,
+                          ...(isClientsSection ? [UserRole.CLIENT] : INTERNAL_ROLE_OPTIONS),
                         ].map((r) => (
                           <option key={r} value={r}>
                             {r}
@@ -221,7 +261,11 @@ export const TeamManagement: React.FC = () => {
       </div>
 
       {/* Invite Modal */}
-      <Modal isOpen={isInviteOpen} onClose={() => setIsInviteOpen(false)} title="Invite Team Member / Client">
+      <Modal
+        isOpen={isInviteOpen}
+        onClose={() => setIsInviteOpen(false)}
+        title={isClientsSection ? 'Invite Client' : 'Invite Team Member'}
+      >
         <form onSubmit={handleInvite} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-slate-700">Email Address</label>
@@ -256,21 +300,29 @@ export const TeamManagement: React.FC = () => {
               />
             </div>
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-700">System Role</label>
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-              className="mt-1 w-full px-3 py-2 rounded-lg border text-xs focus:outline-none"
-            >
-              <option value="DEVELOPER">DEVELOPER</option>
-              <option value="QA">QA</option>
-              <option value="PROJECT_MANAGER">PROJECT_MANAGER</option>
-              <option value="BD">BD</option>
-              <option value="CLIENT">CLIENT</option>
-              <option value="ADMIN">ADMIN</option>
-            </select>
-          </div>
+          {isClientsSection ? (
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">Account Type</label>
+              <p className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600">
+                CLIENT
+              </p>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">System Role</label>
+              <select
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-xs focus:outline-none focus:border-brand-500"
+              >
+                {INTERNAL_ROLE_OPTIONS.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Organization selector for CLIENT role */}
           {role === UserRole.CLIENT && (
