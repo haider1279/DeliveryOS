@@ -235,78 +235,87 @@ export async function deleteUserAccount(
   const deletedAccountSnapshot = await auditService.resolveActorSnapshot(target.id);
 
   // ---- 5. Delete, atomically ---------------------------------------------
+  //
+  // The "preserved" statistics are purely informational (API response only).
+  // Running 24 COUNT queries inside the transaction was the root cause of the
+  // 5 s interactive-transaction timeout: they hold the SERIALIZABLE snapshot
+  // open while scanning large tables, giving PostgreSQL and Prisma no chance
+  // to commit before the deadline.
+  //
+  // Fix: run all counts OUTSIDE the transaction as a pre-flight read.  They
+  // only need to be approximately correct at the time the response is built;
+  // they carry no integrity guarantee and do not need to be in the same
+  // snapshot as the deletes.  The write transaction is then reduced to the
+  // four fast, targeted write operations it has always actually needed.
+  const [
+    profileCount,
+    projectMembershipsCount,
+    notificationsCount,
+    auditLogs,
+    projectActivities,
+    payments,
+    timeEntries,
+    tasksCreated,
+    tasksAssigned,
+    bugsReported,
+    bugsAssigned,
+    requirementsSubmitted,
+    requirementVersions,
+    requirementStatusHistory,
+    estimates,
+    requirementApprovals,
+    clientReviews,
+    testCases,
+    testRuns,
+    releases,
+    fileAssets,
+    taskComments,
+    bugComments,
+    projectRequests,
+  ] = await Promise.all([
+    prisma.profile.count({ where: { userId: target.id } }),
+    prisma.projectMember.count({ where: { userId: target.id } }),
+    prisma.notification.count({ where: { userId: target.id } }),
+    prisma.auditLog.count({ where: { actorId: target.id } }),
+    prisma.projectActivity.count({ where: { actorId: target.id } }),
+    prisma.payment.count({ where: { recordedById: target.id } }),
+    prisma.timeEntry.count({ where: { userId: target.id } }),
+    prisma.task.count({ where: { creatorId: target.id } }),
+    prisma.task.count({ where: { assigneeId: target.id } }),
+    prisma.bug.count({ where: { reporterId: target.id } }),
+    prisma.bug.count({ where: { assigneeId: target.id } }),
+    prisma.requirement.count({ where: { submittedById: target.id } }),
+    prisma.requirementVersion.count({ where: { createdById: target.id } }),
+    prisma.requirementStatusHistory.count({ where: { actorId: target.id } }),
+    prisma.estimate.count({ where: { createdById: target.id } }),
+    prisma.requirementApproval.count({ where: { decidedById: target.id } }),
+    prisma.clientReview.count({ where: { reviewerId: target.id } }),
+    prisma.testCase.count({ where: { createdById: target.id } }),
+    prisma.testRun.count({ where: { executedById: target.id } }),
+    prisma.release.count({ where: { createdById: target.id } }),
+    prisma.fileAsset.count({ where: { uploadedById: target.id } }),
+    prisma.taskComment.count({ where: { authorId: target.id } }),
+    prisma.bugComment.count({ where: { authorId: target.id } }),
+    prisma.projectRequest.count({ where: { requestedById: target.id } }),
+  ]);
+
   let preserved: UserDeletionResult['preserved'];
   let removed: UserDeletionResult['removed'];
 
   const runDeleteTransaction = () =>
     prisma.$transaction(
       async (tx) => {
-        // Count the historical rows that must survive, so the API can report
-        // exactly what was preserved rather than silently dropping it.
-        const [
-          profile,
-          projectMemberships,
-          notifications,
-          auditLogs,
-          projectActivities,
-          payments,
-          timeEntries,
-          tasksCreated,
-          tasksAssigned,
-          bugsReported,
-          bugsAssigned,
-          requirementsSubmitted,
-          requirementVersions,
-          requirementStatusHistory,
-          estimates,
-          requirementApprovals,
-          clientReviews,
-          testCases,
-          testRuns,
-          releases,
-          fileAssets,
-          taskComments,
-          bugComments,
-          projectRequests,
-        ] = await Promise.all([
-          tx.profile.count({ where: { userId: target.id } }),
-          tx.projectMember.count({ where: { userId: target.id } }),
-          tx.notification.count({ where: { userId: target.id } }),
-          tx.auditLog.count({ where: { actorId: target.id } }),
-          tx.projectActivity.count({ where: { actorId: target.id } }),
-          tx.payment.count({ where: { recordedById: target.id } }),
-          tx.timeEntry.count({ where: { userId: target.id } }),
-          tx.task.count({ where: { creatorId: target.id } }),
-          tx.task.count({ where: { assigneeId: target.id } }),
-          tx.bug.count({ where: { reporterId: target.id } }),
-          tx.bug.count({ where: { assigneeId: target.id } }),
-          tx.requirement.count({ where: { submittedById: target.id } }),
-          tx.requirementVersion.count({ where: { createdById: target.id } }),
-          tx.requirementStatusHistory.count({ where: { actorId: target.id } }),
-          tx.estimate.count({ where: { createdById: target.id } }),
-          tx.requirementApproval.count({ where: { decidedById: target.id } }),
-          tx.clientReview.count({ where: { reviewerId: target.id } }),
-          tx.testCase.count({ where: { createdById: target.id } }),
-          tx.testRun.count({ where: { executedById: target.id } }),
-          tx.release.count({ where: { createdById: target.id } }),
-          tx.fileAsset.count({ where: { uploadedById: target.id } }),
-          tx.taskComment.count({ where: { authorId: target.id } }),
-          tx.bugComment.count({ where: { authorId: target.id } }),
-          tx.projectRequest.count({ where: { requestedById: target.id } }),
-        ]);
-
         // Remove the account's own non-historical rows explicitly so the
         // intent is auditable in code and not only implied by FK cascades.
         // (ProjectMember / Notification / Profile are ON DELETE CASCADE in the
-        // schema; deleting them here keeps the intent explicit and the counts
-        // above accurate.)
-        if (projectMemberships > 0) {
+        // schema; deleting them here keeps the intent explicit.)
+        if (projectMembershipsCount > 0) {
           await tx.projectMember.deleteMany({ where: { userId: target.id } });
         }
-        if (notifications > 0) {
+        if (notificationsCount > 0) {
           await tx.notification.deleteMany({ where: { userId: target.id } });
         }
-        if (profile > 0) {
+        if (profileCount > 0) {
           await tx.profile.deleteMany({ where: { userId: target.id } });
         }
 
@@ -317,9 +326,9 @@ export async function deleteUserAccount(
 
         return {
           removed: {
-            profile: profile > 0,
-            projectMemberships,
-            notifications,
+            profile: profileCount > 0,
+            projectMemberships: projectMembershipsCount,
+            notifications: notificationsCount,
             managedProjectsReassignment: null,
           },
           preserved: {

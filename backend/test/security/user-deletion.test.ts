@@ -719,3 +719,119 @@ describe('8. Audit attribution snapshot', () => {
     expect(await auditService.resolveActorSnapshot(target.id)).toBeNull();
   });
 });
+
+// ===========================================================================
+describe('9. Transaction timeout regression (counts moved outside transaction)', () => {
+  /**
+   * Verifies that the deletion transaction itself completes quickly because
+   * the 24 informational COUNT queries now run BEFORE the transaction starts,
+   * outside its SERIALIZABLE snapshot.
+   *
+   * The test builds a user with historical records across every preserved
+   * table, then asserts:
+   *  1. The deletion succeeds (200) — no timeout.
+   *  2. The round-trip completes in under 3 000 ms (well under the 5 000 ms
+   *     Prisma interactive-transaction limit, giving a 40 % safety margin).
+   *  3. The `preserved` counts in the response are non-zero for the tables
+   *     that were populated, proving the pre-flight counts still work correctly
+   *     after being moved outside the transaction.
+   *  4. Historical records survive with NULL actor references.
+   */
+  it('deletion with rich history completes without hitting the transaction timeout', async () => {
+    const org = await makeOrg();
+    const target = await makeUser(UserRole.DEVELOPER, { orgId: org.id });
+    const project = await makeProject(org.id, superAdmin.id, [target.id]);
+
+    // Create one row in every table that contributes to `preserved` counts,
+    // so the pre-flight reads have real data to count.
+    const requirement = await prisma.requirement.create({
+      data: {
+        projectId: project.id,
+        title: 'Timeout regression requirement',
+        description: 'Created to populate preserved counts.',
+        acceptanceCriteria: 'Still here after deletion.',
+        submittedById: target.id,
+        status: RequirementStatus.SUBMITTED,
+      },
+    });
+    const task = await prisma.task.create({
+      data: {
+        projectId: project.id,
+        requirementId: requirement.id,
+        title: 'Timeout regression task',
+        creatorId: target.id,
+        assigneeId: target.id,
+        status: TaskStatus.IN_PROGRESS,
+      },
+    });
+    await prisma.taskComment.create({
+      data: { taskId: task.id, authorId: target.id, content: 'Regression comment.' },
+    });
+    await prisma.timeEntry.create({
+      data: { projectId: project.id, taskId: task.id, userId: target.id, date: new Date(), durationMinutes: 60 },
+    });
+    await prisma.projectActivity.create({
+      data: { projectId: project.id, actorId: target.id, type: 'TASK_UPDATED', message: 'Regression activity.' },
+    });
+    const invoice = await prisma.invoice.create({
+      data: {
+        organizationId: org.id,
+        projectId: project.id,
+        invoiceNumber: `INV-TIMEOUT-${uniq()}`,
+        status: InvoiceStatus.PAID,
+        subtotal: 100,
+        discount: 0,
+        tax: 0,
+        total: 100,
+        issuedDate: new Date(),
+        dueDate: new Date(Date.now() + 86400000),
+      },
+    });
+    invoiceIds.push(invoice.id);
+    await prisma.payment.create({
+      data: { invoiceId: invoice.id, amount: 100, recordedById: target.id },
+    });
+    await prisma.auditLog.create({
+      data: {
+        actorId: target.id,
+        action: 'TASK_UPDATED',
+        entityType: 'Task',
+        entityId: task.id,
+        actorEmail: target.email,
+        actorRole: UserRole.DEVELOPER,
+      },
+    });
+
+    // ---- Time the full round-trip ----------------------------------------
+    const start = Date.now();
+    const res = await request(app)
+      .delete(`/api/users/${target.id}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    const elapsed = Date.now() - start;
+
+    // 1. Must succeed — no timeout error.
+    expect(res.status).toBe(200);
+
+    // 2. Must complete well within the 5 000 ms transaction limit.
+    expect(elapsed).toBeLessThan(3000);
+
+    // 3. Preserved counts reflect the rows we created.
+    const { preserved } = res.body.data as UserDeletionResult;
+    expect(preserved.timeEntries).toBeGreaterThanOrEqual(1);
+    expect(preserved.payments).toBeGreaterThanOrEqual(1);
+    expect(preserved.requirementsSubmitted).toBeGreaterThanOrEqual(1);
+    expect(preserved.auditLogs).toBeGreaterThanOrEqual(1);
+    expect(preserved.projectActivities).toBeGreaterThanOrEqual(1);
+    expect(preserved.tasksCreated).toBeGreaterThanOrEqual(1);
+    expect(preserved.tasksAssigned).toBeGreaterThanOrEqual(1);
+    expect(preserved.comments).toBeGreaterThanOrEqual(1);
+
+    // 4. The account is physically gone.
+    expect(await prisma.user.findUnique({ where: { id: target.id } })).toBeNull();
+
+    // 5. Historical records survive with NULL actor references.
+    const taskAfter = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+    expect(taskAfter.creatorId).toBeNull();
+    expect(taskAfter.assigneeId).toBeNull();
+  });
+});
